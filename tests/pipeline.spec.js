@@ -5,6 +5,12 @@ const reset = require('./reset-queue');
 // an empty queue - the first one consumed it - and tests depend on run order.
 test.beforeEach(() => reset());
 
+/** Only the generated fixtures. Real scans pushed by the Pi can be sitting in
+ *  the same queue, and a test that sends or deletes one destroys real data. */
+function fixtures(documents) {
+  return documents.filter(d => d.batch.startsWith('fx-'));
+}
+
 /** Every page of every document in the queue. */
 async function allPages(request) {
   const { documents } = await (await request.get('/api/queue')).json();
@@ -48,8 +54,7 @@ const TRUTH = path.join(__dirname, '..', 'groundtruth');
 
 test('accepting an untouched frame records schema 2 with unchanged=true',
   async ({ request }) => {
-    const { pending } = await (await request.get('/api/queue')).json();
-    const p = pending.find(x => x.seeded);
+    const p = (await allPages(request)).find(x => x.seeded);
     const r = await request.post(`/api/accept/${encodeURIComponent(p.id)}`, {
       data: { corners: p.corners, frame: p.seeded, rotation: 0,
               target: p.seeded.format } });
@@ -369,8 +374,10 @@ test('A4 accepts at exactly the ISO size however the frame was dragged',
     const rec = JSON.parse(fs.readFileSync(path.join(TRUTH, id + '.json'), 'utf8'));
     expect(rec.accepted.format).toBe('A4');
     expect(rec.error.unchanged).toBe(false);      // it was deliberately distorted
-    const { pending } = await (await request.get('/api/queue')).json();
-    expect(pending.find(p => p.id === id)).toBeUndefined();
+    // The page does not vanish - the filmstrip shows every page of a
+    // document whatever its state - so assert on its status instead.
+    const after = (await allPages(request)).find(p => p.id === id);
+    expect(after.status).toBe('accepted');
   });
 
 test('A6 accepts at exactly 1165x827 landscape', async ({ page }) => {
@@ -401,18 +408,19 @@ test('pushing the frame past the scan edge warns but still accepts', async ({ pa
 
 test('finalize delivers a PDF to the paperless mock', async ({ page }) => {
   await ready(page);
-  await page.getByTestId('btn-accept').click();
-  await expect(page.getByTestId('status')).toContainText('accepted');
-  await expect(page.getByTestId('staged-count')).toHaveText('1');
+  // Send needs every page decided: one run is one document.
+  const n = await decideAll(page);
+  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('paperless');
   const { execSync } = require('child_process');
   const consume = path.join(__dirname, '..', 'mock-paperless', 'consume');
   const pdfs = fs.readdirSync(consume).filter(f => f.endsWith('.pdf')).sort();
   expect(pdfs.length).toBeGreaterThan(0);
-  const n = execSync(`qpdf --show-npages ${path.join(consume, pdfs[pdfs.length - 1])}`)
+  const npages = execSync(
+    `qpdf --show-npages ${path.join(consume, pdfs[pdfs.length - 1])}`)
     .toString().trim();
-  expect(Number(n)).toBeGreaterThan(0);
+  expect(Number(npages)).toBe(n);
 });
 
 test('every icon reference resolves to a symbol in the sprite', async ({ page, request }) => {
@@ -445,6 +453,8 @@ test('buttons are icon-only, apart from the format chips', async ({ page }) => {
   for (const b of labelled) {
     if (/^fmt-A[456]$/.test(b.id)) { expect(b.text).toMatch(/^A[456]$/); continue; }
     if (b.id === 'title-toggle') { expect(b.text).toBeTruthy(); continue; }
+    // Filmstrip tiles are page thumbnails, not glyph buttons.
+    if (/^film-\d+$/.test(b.id)) { expect(b.aria).toBeTruthy(); continue; }
     expect(b.text, `${b.id} should have no visible text`).toBe('');
     expect(b.svg, `${b.id} should carry an icon`).toBe(true);
     // Icon-only means the accessible name has to come from somewhere.
@@ -633,35 +643,36 @@ test('the title collapses to a queue position on mobile and expands on tap',
     await expect(page.getByTestId('page-title')).toBeHidden();
   });
 
-test('the badge tracks position in the queue, and the queue shrinks on accept',
+test('the badge tracks the document position, and a sent document leaves',
   async ({ page }) => {
     await ready(page);
     const first = await page.getByTestId('queue-count').textContent();
     expect(first).toMatch(/^1\/(\d+)$/);
     const total = Number(first.split('/')[1]);
     expect(total).toBeGreaterThan(1);
-    await page.getByTestId('btn-accept').click();
-    await expect(page.getByTestId('status')).toContainText('accepted');
-    // Still on position 1 - the page that took the accepted one's place - and
-    // one fewer page to get through.
+
+    // Decide the whole document, then send it.
+    await decideAll(page);
+    await page.getByTestId('btn-finalize').click();
+    await expect(page.getByTestId('status')).toContainText('paperless');
+    // One fewer document, and we are on the one that took its place.
     await expect(page.getByTestId('queue-count')).toHaveText(`1/${total - 1}`);
   });
 
-test('next and previous walk the queue and the badge follows', async ({ page }) => {
+test('next and previous walk the documents and the badge follows', async ({ page }) => {
   await ready(page);
   const total = Number((await page.getByTestId('queue-count').textContent()).split('/')[1]);
   expect(total).toBeGreaterThanOrEqual(3);
-  const firstId = await page.evaluate(() => window.state.page.id);
+  const firstBatch = await page.evaluate(() => window.currentDoc().batch);
 
   await page.getByTestId('btn-next').click();
   await expect(page.getByTestId('queue-count')).toHaveText(`2/${total}`);
-  const secondId = await page.evaluate(() => window.state.page.id);
-  expect(secondId).not.toBe(firstId);
-  await expect(page.getByTestId('page-title')).toHaveText(secondId);
+  const secondBatch = await page.evaluate(() => window.currentDoc().batch);
+  expect(secondBatch).not.toBe(firstBatch);
 
   await page.getByTestId('btn-prev').click();
   await expect(page.getByTestId('queue-count')).toHaveText(`1/${total}`);
-  expect(await page.evaluate(() => window.state.page.id)).toBe(firstId);
+  expect(await page.evaluate(() => window.currentDoc().batch)).toBe(firstBatch);
 });
 
 test('navigation stops at both ends rather than wrapping', async ({ page }) => {
@@ -712,8 +723,7 @@ test('the floating controls never cover the frame corners', async ({ page }) => 
 
 test('ingest measures the content angle and levels the frame to it',
   async ({ request }) => {
-    const { pending } = await (await request.get('/api/queue')).json();
-    const withText = pending.filter(p => p.text_skew);
+    const withText = (await allPages(request)).filter(p => p.text_skew);
     expect(withText.length).toBeGreaterThan(0);
     for (const p of withText) {
       const t = p.text_skew;
@@ -732,45 +742,43 @@ test('ingest measures the content angle and levels the frame to it',
     expect(withText.some(p => p.text_skew.confident)).toBe(true);
   });
 
-/** Accept every page of whichever batch the queue starts on. */
+/** Accept every page of the document the queue starts on. */
 async function acceptWholeBatch(page) {
-  const batch = await page.evaluate(() => window.state.page.batch);
-  let n = 0;
-  for (;;) {
-    const here = await page.evaluate(() => window.state.page && window.state.page.batch);
-    if (here !== batch) break;
+  const batch = await page.evaluate(() => window.currentDoc().batch);
+  const n = await page.evaluate(() => window.currentDoc().pages.length);
+  for (let i = 0; i < n; i++) {
     await page.getByTestId('btn-accept').click();
     await expect(page.getByTestId('status')).toContainText('accepted');
-    n++;
-    if (await page.evaluate(() => !window.state.page)) break;
   }
   return { batch, n };
 }
 
 test('one ADF batch is one document, and Send is scoped to it', async ({ page, request }) => {
   await ready(page);
-  const { batch, n } = await acceptWholeBatch(page);
+  const batch = await page.evaluate(() => window.currentDoc().batch);
+  const n = await decideAll(page);
   expect(n).toBeGreaterThan(0);
 
-  // The queue has moved on to a different batch, whose tray is empty - Send
-  // must still offer the batch that was just finished.
+  // You stay on the document you just finished, with Send lit.
   const docs = await (await request.get('/api/queue')).json();
-  expect(docs.documents[batch]).toHaveLength(n);
+  const doc = docs.documents.find(d => d.batch === batch);
+  expect(doc.counts.accepted).toBe(n);
+  expect(doc.ready).toBe(true);
   await expect(page.getByTestId('btn-finalize')).toBeEnabled();
   await expect(page.getByTestId('staged-count')).toHaveText(String(n));
 
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('paperless');
   const after = await (await request.get('/api/queue')).json();
-  expect(after.documents[batch]).toBeUndefined();
+  expect(after.documents.find(d => d.batch === batch)).toBeUndefined();
 });
 
 test('each page goes into the PDF at its own true size', async ({ request }) => {
   const { execSync } = require('child_process');
-  const { pending } = await (await request.get('/api/queue')).json();
+  const pages = await allPages(request);
   // The blank A6 note is a batch of one, and landscape - the case a fixed A4
   // layout silently destroyed.
-  const note = pending.find(p => p.seeded && p.seeded.format === 'A6');
+  const note = pages.find(p => p.seeded && p.seeded.format === 'A6');
   expect(note).toBeTruthy();
   const corners = (f) => {
     const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
@@ -814,15 +822,18 @@ test('the top bar stays on one row at common phone widths', async ({ page }, tes
         btnRows: new Set([...tb.querySelectorAll('button')]
           .map(b => Math.round(b.getBoundingClientRect().top))).size,
         buttons: tb.querySelectorAll('button').length,
+        // The filmstrip is expected alongside it; what must not double is the
+        // toolbar itself.
         visibleBars: [...document.getElementById('controls').children]
-          .filter(c => c.getBoundingClientRect().height > 0).length,
+          .filter(c => c.classList.contains('pill')
+                    && c.getBoundingClientRect().height > 0).length,
         overflow: tb.scrollWidth > tb.clientWidth + 1,
       };
     });
     expect(bottom.btnRows, `toolbar wrapped at ${width}px`).toBe(1);
     expect(bottom.overflow, `toolbar overflowed at ${width}px`).toBe(false);
     expect(bottom.buttons).toBe(7);
-    expect(bottom.visibleBars, `two bars visible at ${width}px`).toBe(1);
+    expect(bottom.visibleBars, `two toolbars visible at ${width}px`).toBe(1);
     await expect(page.getByTestId('toolbar-sep')).toBeVisible();
   }
 });
@@ -878,6 +889,21 @@ test('a tap on the dial that moves nothing does not enable undo', async ({ page 
   await page.mouse.move(x + 4, y); await page.mouse.up();
   await expect(page.getByTestId('btn-undo')).toBeEnabled();
 });
+
+/** Decide every page of the current document.
+ *
+ * Waits for each decision to land rather than firing clicks back to back: the
+ * status text does not change between two accepts, so it is not a barrier. */
+async function decideAll(page, which = 'btn-accept') {
+  const n = await page.evaluate(() => window.currentDoc().pages.length);
+  const key = which === 'btn-accept' ? 'accepted' : 'rejected';
+  for (let i = 1; i <= n; i++) {
+    await page.getByTestId(which).click();
+    await page.waitForFunction(
+      ([k, want]) => window.currentDoc().counts[k] === want, [key, i]);
+  }
+  return n;
+}
 
 /** Hold a drag open so mid-gesture state can be inspected. */
 async function beginDrag(page, from, to) {
@@ -977,7 +1003,7 @@ test('a decided page can be reopened until it is sent', async ({ request }) => {
   // empties the document, which then leaves the queue and takes the page's
   // reopen path with it. See "Known limits" in the README.
   const { documents } = await (await request.get('/api/queue')).json();
-  const doc = documents.find(d => d.counts.total > 1);
+  const doc = fixtures(documents).find(d => d.counts.total > 1);
   const p = doc.pages.find(x => x.status === 'pending');
   await request.post(`/api/reject/${encodeURIComponent(p.id)}`);
   let after = (await allPages(request)).find(x => x.id === p.id);
@@ -997,7 +1023,7 @@ test('reopening an unknown page is a 404', async ({ request }) => {
 test('a sent page cannot be reopened, and finalize needs a decided document',
   async ({ request }) => {
     const { documents } = await (await request.get('/api/queue')).json();
-    const doc = documents.find(d => d.counts.total > 1) || documents[0];
+    const doc = fixtures(documents).find(d => d.counts.total > 1);
 
     const early = await request.post(`/api/finalize/${encodeURIComponent(doc.batch)}`);
     expect(early.status()).toBe(409);
@@ -1024,8 +1050,8 @@ test('a sent page cannot be reopened, and finalize needs a decided document',
 
 test('a wholly declined document stays until deleted, then goes', async ({ request }) => {
   const { documents } = await (await request.get('/api/queue')).json();
-  const doc = documents.find(d => d.counts.total === 1);
-  expect(doc, 'need a single-page document').toBeTruthy();
+  const doc = fixtures(documents).find(d => d.counts.total === 1);
+  expect(doc, 'need a single-page fixture document').toBeTruthy();
 
   await request.post(`/api/reject/${encodeURIComponent(doc.pages[0].id)}`);
   let q = await (await request.get('/api/queue')).json();
@@ -1052,7 +1078,7 @@ test('a wholly declined document stays until deleted, then goes', async ({ reque
 
 test('a document with something to keep cannot be deleted', async ({ request }) => {
   const { documents } = await (await request.get('/api/queue')).json();
-  const doc = documents.find(d => d.counts.total > 1);
+  const doc = fixtures(documents).find(d => d.counts.total > 1);
   const corners = (f) => {
     const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
     const ca = Math.cos(a), sa = Math.sin(a);
@@ -1082,3 +1108,90 @@ test('thumbnails are small and cached', async ({ request }) => {
   expect(fs.existsSync(path.join(__dirname, '..', 'work', 'thumbs',
                                  p.id + '.jpg'))).toBe(true);
 });
+
+test('the filmstrip shows every page of the current document with its state',
+  async ({ page }) => {
+    await ready(page);
+    const doc = await page.evaluate(() => window.currentDoc());
+    const films = page.locator('#filmstrip .film');
+    await expect(films).toHaveCount(doc.pages.length);
+    await expect(page.locator('#filmstrip .film[aria-current=true]')).toHaveCount(1);
+    await page.getByTestId('btn-reject').click();
+    await expect(page.locator('#filmstrip .film[data-state=rejected]')).toHaveCount(1);
+  });
+
+test('the chevrons step documents, not pages', async ({ page }) => {
+  await ready(page);
+  const first = await page.evaluate(() => window.currentDoc().batch);
+  const total = await page.evaluate(() => window.state.documents.length);
+  expect(total).toBeGreaterThan(1);
+  await page.getByTestId('btn-next').click();
+  const second = await page.evaluate(() => window.currentDoc().batch);
+  expect(second).not.toBe(first);
+  await expect(page.getByTestId('queue-count')).toHaveText(`2/${total}`);
+});
+
+test('accepting a page advances to the next undecided one in the document',
+  async ({ page }) => {
+    await ready(page);
+    const total = await page.evaluate(() => window.state.documents.length);
+    for (let i = 0; i < total; i++) {
+      if (await page.evaluate(() => window.currentDoc().pages.length) > 1) break;
+      await page.getByTestId('btn-next').click();
+    }
+    const before = await page.evaluate(() => window.currentPage().id);
+    await page.getByTestId('btn-accept').click();
+    await expect(page.getByTestId('status')).toContainText('accepted');
+    const after = await page.evaluate(() => window.currentPage().id);
+    expect(after).not.toBe(before);
+    expect(await page.evaluate(() => window.currentPage().status)).toBe('pending');
+  });
+
+test('tapping a decided page in the filmstrip reopens it', async ({ page }) => {
+  await ready(page);
+  await page.getByTestId('btn-reject').click();
+  const rejected = page.locator('#filmstrip .film[data-state=rejected]').first();
+  await expect(rejected).toHaveCount(1);
+  await rejected.click();
+  await expect(page.locator('#filmstrip .film[data-state=rejected]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.currentPage().status)).toBe('pending');
+});
+
+test('deciding the last page leaves you put and lights Send', async ({ page }) => {
+  await ready(page);
+  const n = await decideAll(page);
+  expect(await page.evaluate(() => window.currentDoc().ready)).toBe(true);
+  await expect(page.getByTestId('btn-finalize')).toBeEnabled();
+  await expect(page.getByTestId('btn-finalize')).toHaveAttribute('data-action', 'send');
+  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
+});
+
+test('Send becomes Delete when every page is declined', async ({ page }) => {
+  await ready(page);
+  await decideAll(page, 'btn-reject');
+  await expect(page.getByTestId('btn-finalize')).toHaveAttribute('data-action', 'delete');
+  await expect(page.getByTestId('btn-finalize')).toBeEnabled();
+  await expect(page.getByTestId('staged-count')).toHaveText('');
+  const batch = await page.evaluate(() => window.currentDoc().batch);
+  await page.getByTestId('btn-finalize').click();
+  await expect(page.getByTestId('status')).toContainText('deleted');
+  expect(await page.evaluate(
+    () => window.state.documents.map(d => d.batch))).not.toContain(batch);
+});
+
+test('filmstrip tiles are page-shaped, not the generic round buttons',
+  async ({ page }) => {
+    await ready(page);
+    // `button:not(.grow)` is more specific than a bare `.film`, so the tiles
+    // silently inherited the 44px circle used everywhere else.
+    const box = await page.evaluate(() => {
+      const b = document.querySelector('#filmstrip .film');
+      const r = b.getBoundingClientRect();
+      return { w: r.width, h: r.height,
+               radius: getComputedStyle(b).borderRadius };
+    });
+    expect(box.h).toBeGreaterThan(box.w);         // portrait, like a page
+    expect(box.w).toBeCloseTo(52, 0);
+    expect(box.h).toBeCloseTo(68, 0);
+    expect(parseFloat(box.radius)).toBeLessThan(20);   // not a circle
+  });

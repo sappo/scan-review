@@ -29,6 +29,7 @@ const ICONS = {
   pagesetup: 'proportions',
   reset: 'rotate-ccw',
   send: 'send-horizontal',
+  trash: 'trash-2',
   minus: 'minus',
   plus: 'plus',
 };

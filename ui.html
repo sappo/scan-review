@@ -72,6 +72,34 @@
   .sep { flex:none; width:1px; height:24px; margin:0 5px;
          background:var(--line); border-radius:1px; }
 
+  /* The pages of the current document. Both the way into a page and the
+     document's progress at a glance. */
+  #filmstrip { display:flex; gap:6px; padding:6px 8px; overflow-x:auto;
+               max-width:calc(100vw - 20px); background:var(--float);
+               border-radius:14px; backdrop-filter:blur(10px);
+               box-shadow:0 4px 20px rgba(0,0,0,.45); pointer-events:auto;
+               scrollbar-width:none; }
+  #filmstrip::-webkit-scrollbar { display:none; }
+  #filmstrip:empty { display:none; }
+  /* Page-shaped and 52px wide rather than 96: five or six then fit a 375px
+     screen without scrolling, which is the common case. The thumbnail itself
+     is 160px so it stays sharp on a dense display. */
+  #filmstrip .film { position:relative; flex:none; width:52px; height:68px;
+          padding:0; border:2px solid transparent; border-radius:8px;
+          overflow:hidden; background:#1b2028; }
+  #filmstrip .film img { width:100%; height:100%; object-fit:cover;
+                         display:block; }
+  #filmstrip .film[aria-current=true] { border-color:var(--accent); }
+  #filmstrip .film[data-state=rejected] img { opacity:.3; }
+  #filmstrip .mark { position:absolute; right:2px; bottom:2px; width:16px;
+                height:16px; border-radius:8px; font-size:11px; line-height:16px;
+                text-align:center; font-weight:700; }
+  #filmstrip .film[data-state=accepted] .mark { background:var(--accent);
+                                                color:#06121f; }
+  #filmstrip .film[data-state=rejected] .mark { background:var(--err);
+                                                color:#fff; }
+  button.danger.counted { color:#ffb4ad; }
+
   button.grow { border:0; font:inherit; }
   button:not(.grow) { width:44px; height:44px; padding:0; border:0; border-radius:999px;
            background:transparent; color:var(--text); display:grid;
@@ -154,6 +182,7 @@
 
 <div id="controls">
   <div id="status" data-testid="status"></div>
+  <div id="filmstrip" data-testid="filmstrip"></div>
   <p class="flag" data-testid="hint-mismatch" hidden>Panel hint disagrees with detection</p>
   <p class="flag" data-testid="outside-flag" hidden>Crop extends past the scan</p>
 

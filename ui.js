@@ -38,7 +38,7 @@ const dctx = dial.getContext('2d');
 
 const state = {
   page: null, img: null,
-  pending: [], index: 0, documents: {}, lastBatch: null,
+  documents: [], docIndex: 0, pageIndex: 0,
   // Edits are kept per page id, so stepping away and back does not silently
   // throw away work. Navigation you cannot trust is worse than none.
   edits: {},
@@ -780,9 +780,10 @@ async function accept() {
   if (!r.ok) { say('accept failed', 'var(--err)'); return; }
   const out = await r.json();
   say(`accepted ${out.width}×${out.height}`, 'var(--accent)');
-  state.lastBatch = state.page.batch;
   delete state.edits[state.page.id];
   await load();
+  advanceAfterDecision();
+  await showPage();
 }
 
 async function reject() {
@@ -791,17 +792,21 @@ async function reject() {
   say('rejected');
   delete state.edits[state.page.id];
   await load();
+  advanceAfterDecision();
+  await showPage();
 }
 
 async function finalize() {
-  const batch = currentBatch();
-  if (!batch) { say('nothing staged', 'var(--err)'); return; }
-  const r = await fetch('/api/finalize/' + encodeURIComponent(batch),
-                        { method: 'POST' });
-  if (!r.ok) { say('nothing to send', 'var(--err)'); return; }
+  const d = currentDoc();
+  if (!d || !d.ready) { say('decide every page first', 'var(--err)'); return; }
+  const del = d.deletable;
+  const r = await fetch(`/api/${del ? 'discard' : 'finalize'}/`
+                        + encodeURIComponent(d.batch), { method: 'POST' });
+  if (!r.ok) { say(del ? 'delete failed' : 'nothing to send', 'var(--err)'); return; }
   const out = await r.json();
-  say(`sent to paperless: ${out.pages} page(s)`, 'var(--accent)');
-  if (state.lastBatch === batch) state.lastBatch = null;
+  say(del ? 'document deleted'
+          : `sent to paperless: ${out.pages} page(s)`, 'var(--accent)');
+  state.pageIndex = 0;
   await load();
 }
 window.accept = accept; window.reject = reject; window.finalize = finalize;
@@ -817,61 +822,135 @@ function captureEdit() {
   };
 }
 
-/** The batch Send would act on.
- *
- * The current page's batch, but only if it actually has pages staged.
- * Accepting the LAST page of a batch moves the queue on to the next one, whose
- * tray is empty - and then Send would grey out on the batch you had just
- * finished, which is precisely when you want it.
- */
-function currentBatch() {
-  const staged = b => b && (state.documents[b] || []).length > 0;
-  const here = state.page && state.page.batch;
-  if (staged(here)) return here;
-  if (staged(state.lastBatch)) return state.lastBatch;
-  const any = Object.keys(state.documents).filter(b => staged(b));
-  return any.length === 1 ? any[0] : (here || null);
+function currentDoc() { return state.documents[state.docIndex] || null; }
+function currentPage() {
+  const d = currentDoc();
+  return d ? d.pages[state.pageIndex] || null : null;
 }
-window.currentBatch = currentBatch;
+window.currentDoc = currentDoc; window.currentPage = currentPage;
 
+/** Send, or Delete when there is nothing to keep.
+ *
+ * A wholly declined document has no PDF to make, so the only way to close it is
+ * to delete it. Removing it automatically was worse: it made rejecting the only
+ * page of a one-page document silently irreversible.
+ */
 function updateStaged() {
-  const b = currentBatch();
-  const n = (b && state.documents[b] || []).length;
-  q('staged-count').textContent = n ? String(n) : '';
-  q('btn-finalize').disabled = n === 0;
-  q('btn-finalize').title = n
-    ? `Send ${n} page${n === 1 ? '' : 's'} to paperless`
-    : 'Nothing staged yet';
+  const d = currentDoc();
+  const btn = q('btn-finalize');
+  const use = btn.querySelector('use');
+  const n = d ? d.counts.accepted : 0;
+  const del = !!(d && d.deletable);
+  btn.classList.toggle('danger', del);
+  use.setAttribute('href', del ? '/icons.svg#trash' : '/icons.svg#send');
+  btn.dataset.action = del ? 'delete' : 'send';
+  q('staged-count').textContent = (!del && n) ? String(n) : '';
+  btn.disabled = !d || !d.ready || (!del && n === 0);
+  btn.title = del ? 'Delete this document'
+    : (d && d.ready && n) ? `Send ${n} page${n === 1 ? '' : 's'} to paperless`
+    : 'Decide every page first';
+  btn.setAttribute('aria-label', del ? 'Delete document' : 'Send to paperless');
 }
 window.updateStaged = updateStaged;
 
 function updateNav() {
-  const n = state.pending.length;
-  q('queue-count').textContent = n ? `${state.index + 1}/${n}` : '0/0';
-  q('btn-prev').disabled = state.index <= 0;
-  q('btn-next').disabled = state.index >= n - 1;
+  const n = state.documents.length;
+  q('queue-count').textContent = n ? `${state.docIndex + 1}/${n}` : '0/0';
+  q('btn-prev').disabled = state.docIndex <= 0;
+  q('btn-next').disabled = state.docIndex >= n - 1;
+  const d = currentDoc(), p = currentPage();
+  q('page-title').textContent = d
+    ? `${d.label}${d.pages.length > 1 ? ` · p${p ? p.page_no : '?'}` : ''}`
+    : 'queue empty';
+  q('btn-accept').disabled = !p || p.status !== 'pending';
+  q('btn-reject').disabled = !p || p.status !== 'pending';
   updateStaged();
   applyTitleState();
 }
 
-/** Move through the queue. Bounded rather than wrapping: on a phone a wrap
- *  looks identical to not having moved. */
+/** Step DOCUMENTS. Bounded, not wrapping: on a phone a wrap looks identical to
+ *  not having moved. */
 async function step(delta) {
-  const next = state.index + delta;
-  if (next < 0 || next >= state.pending.length) return;
+  const next = state.docIndex + delta;
+  if (next < 0 || next >= state.documents.length) return;
   captureEdit();
-  state.index = next;
+  state.docIndex = next;
+  state.pageIndex = firstUndecided(state.documents[next]);
   await showPage();
 }
 window.step = step;
 
+function firstUndecided(doc) {
+  if (!doc) return 0;
+  const i = doc.pages.findIndex(p => p.status === 'pending');
+  return i < 0 ? 0 : i;
+}
+
+/** Open a page of this document. A decided page is reopened first - that is
+ *  what makes the last look before Send worth having. */
+async function selectPage(i) {
+  const d = currentDoc();
+  if (!d || !d.pages[i]) return;
+  captureEdit();
+  const p = d.pages[i];
+  state.pageIndex = i;
+  if (p.status === 'accepted' || p.status === 'rejected') {
+    const r = await fetch('/api/reopen/' + encodeURIComponent(p.id),
+                          { method: 'POST' });
+    if (r.ok) { await load(); return; }
+  }
+  await showPage();
+}
+window.selectPage = selectPage;
+
+/** After a decision, the next undecided page of this document, scanning forward
+ *  and wrapping once - pages can be decided out of order from the filmstrip, so
+ *  the next one may be behind you. */
+function advanceAfterDecision() {
+  const d = currentDoc();
+  if (!d) return;
+  const n = d.pages.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (state.pageIndex + k) % n;
+    if (d.pages[i].status === 'pending') { state.pageIndex = i; return; }
+  }
+}
+window.advanceAfterDecision = advanceAfterDecision;
+
+function renderFilmstrip() {
+  const strip = document.getElementById('filmstrip');
+  const d = currentDoc();
+  strip.innerHTML = '';
+  if (!d) return;
+  d.pages.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'film';
+    b.dataset.testid = 'film-' + i;
+    b.dataset.state = p.status;
+    b.setAttribute('aria-current', String(i === state.pageIndex));
+    b.setAttribute('aria-label', `Page ${p.page_no}, ${p.status}`);
+    b.onclick = () => selectPage(i);
+    const im = document.createElement('img');
+    im.src = '/api/thumb/' + encodeURIComponent(p.id);
+    im.alt = '';
+    b.appendChild(im);
+    if (p.status === 'accepted' || p.status === 'rejected') {
+      const m = document.createElement('span');
+      m.className = 'mark';
+      m.textContent = p.status === 'accepted' ? '✓' : '✕';
+      b.appendChild(m);
+    }
+    strip.appendChild(b);
+  });
+}
+window.renderFilmstrip = renderFilmstrip;
+
 async function showPage() {
   state.peek = false;
-  const p = state.pending[state.index];
+  const p = currentPage();
   if (!p) {
     state.page = null; state.img = null; state.frame = null;
-    q('page-title').textContent = 'queue empty';
-    updateNav(); render();
+    renderFilmstrip(); updateNav(); render();
     return;
   }
   state.page = p;
@@ -888,13 +967,10 @@ async function showPage() {
     state.orientation = (s && s.orientation) || 'portrait';
     state.rotation = 0;
   }
-  // The dial always reads 0 at what the detector proposed, not at what a
-  // previous edit left behind.
   state.detectedAngle = s ? s.angle : 0;
   state.seedW = s ? s.w : state.frame.w;
   state.history = [];
   state.view = { zoom: 1, panX: 0, panY: 0 };
-  q('page-title').textContent = p.id;
   q('angle-readout').textContent =
       `${dialValue() >= 0 ? '+' : ''}${dialValue().toFixed(2)}°`;
   await new Promise(res => {
@@ -904,6 +980,7 @@ async function showPage() {
     im.src = '/api/image/' + encodeURIComponent(p.id) + '?t=' + Date.now();
   });
   syncChips();
+  renderFilmstrip();
   updateNav();
   resize();
 }
@@ -912,11 +989,11 @@ window.showPage = showPage;
 async function load() {
   const r = await fetch('/api/queue');
   const data = await r.json();
-  state.pending = data.pending;
-  state.documents = data.documents || {};
-  // Clamp rather than reset: after accepting page 3 of 6 you want to be on the
-  // page that took its place, not back at the start.
-  state.index = Math.max(0, Math.min(state.index, state.pending.length - 1));
+  state.documents = data.documents || [];
+  state.docIndex = Math.max(0, Math.min(state.docIndex,
+                                        state.documents.length - 1));
+  const d = currentDoc();
+  if (!d || state.pageIndex >= d.pages.length) state.pageIndex = firstUndecided(d);
   await showPage();
 }
 window.load = load;

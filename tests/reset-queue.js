@@ -26,11 +26,21 @@ const CONSUME = path.join(ROOT, 'mock-paperless', 'consume');
 /** The suite supplies its own scans. It used to run against real documents in
  *  spool/, which are not in the repository and were consumed as the tests ran,
  *  so it only worked on one machine and only until the queue emptied. */
+const FIXTURE_COUNT = 4;
+
 function ensureFixtures() {
   const spool = path.join(ROOT, 'spool');
-  const have = fs.existsSync(spool) &&
-    fs.readdirSync(spool).some(f => f.startsWith('fx-') && f.endsWith('.png'));
-  if (have) return;
+  // Deleting a document MOVES its scans to spool-archive, so a fixture can
+  // leave the spool during a run. Checking merely that some fx- file exists let
+  // the set shrink permanently and starved later tests of documents.
+  const archive = path.join(ROOT, 'spool-archive');
+  if (fs.existsSync(archive))
+    for (const f of fs.readdirSync(archive))
+      if (f.startsWith('fx-')) fs.unlinkSync(path.join(archive, f));
+  const have = fs.existsSync(spool)
+    ? fs.readdirSync(spool).filter(f => f.startsWith('fx-') && f.endsWith('.png')).length
+    : 0;
+  if (have >= FIXTURE_COUNT) return;
   execFileSync(path.join(ROOT, '.venv', 'bin', 'python'),
                [path.join(ROOT, 'make_fixtures.py'), spool], { stdio: 'inherit' });
 }
