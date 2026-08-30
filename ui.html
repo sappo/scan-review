@@ -1,0 +1,427 @@
+<title>Scan Review</title>
+<style>
+  :root { --bg:#12151a; --panel:#1b2028; --line:#2c3442; --text:#e6eaf0; --dim:#8b95a5;
+          --accent:#4a9eff; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:10px 18px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  .muted { color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:1fr 1fr 260px; gap:14px; padding:14px;
+         align-items:start; }
+  @media (max-width:1100px) { main { grid-template-columns:1fr; } }
+  .pane { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .pane h2, .card h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+                       color:var(--dim); margin:0 0 8px; font-weight:600; }
+  canvas, #preview { max-width:100%; display:block; margin:0 auto; border-radius:4px; }
+  canvas { cursor:crosshair; touch-action:none; }
+  #preview { background:#fff; min-height:80px; }
+  #pvwrap { position:relative; display:inline-block; max-width:100%; }
+  #grid { position:absolute; left:0; top:0; pointer-events:none; }
+  .gridrow { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dim);
+             margin-top:2px; }
+  input[type=range] { width:100%; margin:2px 0 6px; accent-color:var(--accent); }
+  .skewval { font-variant-numeric:tabular-nums; color:var(--text); min-width:52px;
+             text-align:right; }
+  aside { display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  button, select { width:100%; padding:8px 10px; margin-bottom:7px; border-radius:6px;
+           border:1px solid var(--line); background:#232a34; color:var(--text);
+           font-size:14px; cursor:pointer; }
+  button:hover:not(:disabled), select:hover { border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
+  button.danger { background:#2a1d1f; border-color:#5c2a2e; color:#ffb4ad; }
+  .row { display:flex; gap:6px; }
+  .row button { margin-bottom:7px; }
+  dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 10px; font-size:13px; }
+  dt { color:var(--dim); } dd { margin:0; }
+  .flag { color:var(--warn); font-size:12px; margin:6px 0 0; }
+  ul { list-style:none; margin:0; padding:0; font-size:13px; }
+  li { padding:3px 0; border-bottom:1px solid var(--line); color:var(--dim); }
+  li:last-child { border:0; }
+  #status { font-size:13px; min-height:18px; }
+</style>
+
+<header>
+  <h1>Scan Review</h1>
+  <span class="muted" data-testid="queue-count">…</span>
+  <span class="muted" data-testid="page-title"></span>
+</header>
+
+<main>
+  <div class="pane">
+    <h2>Source — drag the corners or the sides</h2>
+    <canvas id="cv" data-testid="canvas"></canvas>
+  </div>
+  <div class="pane">
+    <h2>Result — deskewed &amp; cropped</h2>
+    <div id="pvwrap"><img id="preview" data-testid="preview" alt="deskewed preview">
+      <canvas id="grid" data-testid="grid"></canvas></div>
+  </div>
+  <aside>
+    <div class="card">
+      <h2>Page size</h2>
+      <select data-testid="format" onchange="setFormat(this.value)"></select>
+      <dl>
+        <dt>Scanner hint</dt><dd data-testid="hint">–</dd>
+        <dt>Auto-detected</dt><dd data-testid="detected">–</dd>
+        <dt>Output</dt><dd data-testid="outdims">–</dd>
+        <dt>Detected skew</dt><dd data-testid="skew">–</dd>
+        <dt>Rotation</dt><dd data-testid="rotation">0°</dd>
+      </dl>
+      <p class="flag" data-testid="hint-mismatch" hidden>Scanner hint disagrees with
+        automatic detection — worth a closer look before accepting.</p>
+      <p class="flag" data-testid="outside-flag" hidden>Crop extends past the scan; the
+        missing sliver is filled white rather than skewing the page.</p>
+    </div>
+
+    <div class="card">
+      <h2>Deskew</h2>
+      <input type="range" data-testid="skew-slider" id="skewSlider"
+             min="-15" max="15" step="0.1" value="0">
+      <div class="gridrow">
+        <span>−15°</span>
+        <span class="skewval" data-testid="manualskew">0.00°</span>
+        <span>+15°</span>
+      </div>
+      <div class="row">
+        <button data-testid="skew-minus-01" onclick="nudge(-0.1)">−0.1°</button>
+        <button data-testid="skew-plus-01" onclick="nudge(0.1)">+0.1°</button>
+      </div>
+      <label class="gridrow"><input type="checkbox" data-testid="grid-toggle"
+             id="gridToggle" checked onchange="drawGrid()"> Show gridlines</label>
+      <button data-testid="btn-rotate" onclick="rotate90()">Rotate 90°</button>
+    </div>
+
+    <div class="card">
+      <h2>Actions</h2>
+      <button data-testid="btn-undo" onclick="undo()">Undo</button>
+      <button data-testid="btn-reset" onclick="reset()">Reset to detected</button>
+      <button class="primary" data-testid="btn-accept" onclick="accept()">Accept</button>
+      <button class="danger" data-testid="btn-reject" onclick="reject()">Reject</button>
+    </div>
+
+    <div class="card">
+      <h2>Document</h2>
+      <ul data-testid="doc-list"><li>no pages yet</li></ul>
+      <button data-testid="btn-finalize" onclick="finalize()" style="margin-top:8px">
+        Send to paperless</button>
+      <div id="status" data-testid="status"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const previewEl = document.getElementById('preview');
+let page=null, img=null, corners=[], scale=1, rotation=0, drag=-1;
+let format='free', manualSkew=0, history=[], previewTimer=null, lastPreview=0;
+let dragEdge=-1, hoverEdge=-1, lastPt=null;
+const HANDLE = 11;
+const MARGIN = 34;   // room around the image so off-image handles stay reachable
+
+window.__scanpipe = {
+  get corners(){ return corners; }, get page(){ return page; },
+  get format(){ return format; }, get manualSkew(){ return manualSkew; },
+  get historyDepth(){ return history.length; },
+  edgeAt: (x,y) => edgeAt(x,y),
+};
+
+const q = s => document.querySelector(`[data-testid=${s}]`);
+
+/** Snapshot state so every mutation is revertible. */
+function pushHistory() {
+  history.push({ corners: corners.map(c => [...c]), rotation, format, manualSkew });
+  q('btn-undo').disabled = false;
+}
+function undo() {
+  if (!history.length) return;
+  const h = history.pop();
+  corners = h.corners; rotation = h.rotation; format = h.format; manualSkew = h.manualSkew;
+  q('btn-undo').disabled = history.length === 0;
+  syncControls(); draw(); refreshPreview(true);
+}
+function reset() {
+  if (!page) return;
+  pushHistory();
+  corners = page.corners.map(c => [...c]);
+  rotation = 0; manualSkew = 0; format = page.format || 'free';
+  syncControls(); draw(); refreshPreview(true);
+}
+
+function syncControls() {
+  q('rotation').textContent = rotation + '°';
+  q('manualskew').textContent = manualSkew.toFixed(2) + '°';
+  const sl = document.getElementById('skewSlider');
+  if (sl && Math.abs(parseFloat(sl.value) - manualSkew) > 1e-9) sl.value = manualSkew;
+  q('format').value = format;
+  const outside = corners.some(c => c[0] < 0 || c[1] < 0 ||
+      c[0] > page.width - 1 || c[1] > page.height - 1);
+  q('outside-flag').hidden = !outside;
+}
+
+function setFormat(v) { pushHistory(); format = v; refreshPreview(true); }
+
+/** Rotate the quad about its centre — manual deskew on top of the detection. */
+function applySkew(deg) {
+  if (!page || !deg) return;
+  manualSkew = +(manualSkew + deg).toFixed(2);
+  const cx = corners.reduce((s,c)=>s+c[0],0)/4, cy = corners.reduce((s,c)=>s+c[1],0)/4;
+  const a = deg * Math.PI/180, cos = Math.cos(a), sin = Math.sin(a);
+  corners = corners.map(([x,y]) => {
+    const dx = x-cx, dy = y-cy;
+    return [cx + dx*cos - dy*sin, cy + dx*sin + dy*cos];
+  });
+  syncControls(); draw(); refreshPreview(false);
+}
+
+/** Buttons and slider both funnel through applySkew, each as one undo step. */
+function nudge(deg) { if (!page) return; pushHistory(); applySkew(deg); refreshPreview(true); }
+
+// The slider is absolute; apply only the delta so `corners` stays authoritative
+// and dragging a handle afterwards still behaves. One history entry per gesture.
+let skewGesture = false;
+(function wireSlider() {
+  const sl = document.getElementById('skewSlider');
+  const begin = () => { if (page && !skewGesture) { pushHistory(); skewGesture = true; } };
+  sl.addEventListener('pointerdown', begin);
+  sl.addEventListener('keydown', begin);
+  sl.addEventListener('input', () => {
+    if (!page) return;
+    begin();
+    applySkew(+(parseFloat(sl.value) - manualSkew).toFixed(4));
+  });
+  const end = () => { skewGesture = false; refreshPreview(true); };
+  sl.addEventListener('pointerup', end);
+  sl.addEventListener('change', end);
+  sl.addEventListener('blur', end);
+})();
+
+/** Gridlines over the preview, so "is this level?" is judged against a
+ *  reference rather than by eye. */
+function drawGrid() {
+  const g = document.getElementById('grid'), im = previewEl;
+  const on = document.getElementById('gridToggle').checked;
+  const w = im.clientWidth, h = im.clientHeight;
+  if (!w || !h) { g.width = g.height = 0; return; }
+  g.width = w; g.height = h; g.style.width = w + 'px'; g.style.height = h + 'px';
+  const c = g.getContext('2d');
+  c.clearRect(0, 0, w, h);
+  if (!on) return;
+  const step = Math.max(28, Math.round(Math.min(w, h) / 10));
+  c.lineWidth = 1;
+  c.strokeStyle = 'rgba(74,158,255,0.35)';
+  c.beginPath();
+  for (let x = step; x < w; x += step) { c.moveTo(x + .5, 0); c.lineTo(x + .5, h); }
+  for (let y = step; y < h; y += step) { c.moveTo(0, y + .5); c.lineTo(w, y + .5); }
+  c.stroke();
+  // Stronger centre cross for a primary horizontal/vertical reference.
+  c.strokeStyle = 'rgba(255,90,90,0.55)';
+  c.beginPath();
+  c.moveTo(0, Math.round(h/2) + .5); c.lineTo(w, Math.round(h/2) + .5);
+  c.moveTo(Math.round(w/2) + .5, 0); c.lineTo(Math.round(w/2) + .5, h);
+  c.stroke();
+}
+window.addEventListener('resize', drawGrid);
+function rotate90() { pushHistory(); rotation = (rotation+90)%360; syncControls(); refreshPreview(true); }
+
+async function load() {
+  const data = await (await fetch('/api/queue')).json();
+  q('queue-count').textContent = data.pending.length + ' pending';
+  const list = q('doc-list');
+  list.innerHTML = data.document.length
+      ? data.document.map(d => `<li>${d}</li>`).join('') : '<li>no pages yet</li>';
+  q('btn-finalize').disabled = data.document.length === 0;
+
+  const ctrls = ['btn-accept','btn-reject','btn-reset','skew-slider',
+                 'skew-minus-01','skew-plus-01','btn-rotate','format'];
+  if (!data.pending.length) {
+    page = null; previewEl.removeAttribute('src');
+    const g = document.getElementById('grid'); g.width = g.height = 0;
+    q('page-title').textContent = 'queue empty';
+    ctrls.concat(['btn-undo']).forEach(t => q(t).disabled = true);
+    cv.width = 420; cv.height = 160; ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.fillStyle = '#8b95a5'; ctx.font = '15px system-ui';
+    ctx.fillText('Queue empty — scan and fetch to add pages', 40, 84);
+    return;
+  }
+  ctrls.forEach(t => q(t).disabled = false);
+  // ?page=<id> opens a specific pending page; otherwise take the first. Lets you
+  // link straight back to a page instead of working strictly front-to-back.
+  const want = new URLSearchParams(location.search).get('page');
+  page = (want && data.pending.find(p => p.id === want)) || data.pending[0];
+  history = []; q('btn-undo').disabled = true;
+  corners = page.corners.map(c => [...c]);
+  rotation = 0; manualSkew = 0; format = page.format || 'free';
+
+  const sel = q('format');
+  if (!sel.options.length) {
+    const f = await (await fetch('/api/formats')).json();
+    sel.innerHTML = f.formats.map(x => `<option value="${x}">${x}</option>`).join('');
+  }
+  q('page-title').textContent = page.id;
+  q('skew').textContent = page.angle.toFixed(2) + '°';
+  // The hint is advice from the scanner panel; detection is independent of it.
+  q('hint').textContent = page.hint || 'none';
+  q('detected').textContent = page.format;
+  q('hint-mismatch').hidden = (page.hint_agrees !== false);
+
+  img = new Image();
+  img.onload = () => {
+    scale = Math.min((560 - 2*MARGIN)/img.width, (760 - 2*MARGIN)/img.height, 1);
+    cv.width = Math.round(img.width*scale) + 2*MARGIN;
+    cv.height = Math.round(img.height*scale) + 2*MARGIN;
+    syncControls(); draw(); refreshPreview(true);
+  };
+  img.src = '/api/image/' + encodeURIComponent(page.id) + '?t=' + Date.now();
+}
+
+/** Distance from point p to segment ab, plus the segment's unit normal. */
+function segInfo(p, a, b) {
+  const vx = b[0]-a[0], vy = b[1]-a[1];
+  const len2 = vx*vx + vy*vy || 1;
+  let t = ((p[0]-a[0])*vx + (p[1]-a[1])*vy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a[0] + t*vx, cy = a[1] + t*vy;
+  const len = Math.sqrt(len2);
+  return { dist: Math.hypot(p[0]-cx, p[1]-cy), nx: -vy/len, ny: vx/len, t };
+}
+
+/** Which edge is near this canvas-space point, ignoring the corner grab zones. */
+function edgeAt(x, y) {
+  const p = [x, y];
+  for (let i = 0; i < 4; i++) {
+    const a = [corners[i][0]*scale+MARGIN, corners[i][1]*scale+MARGIN];
+    const b = [corners[(i+1)%4][0]*scale+MARGIN, corners[(i+1)%4][1]*scale+MARGIN];
+    const info = segInfo(p, a, b);
+    // Corners win: only treat it as an edge away from the two endpoints.
+    const nearCorner = corners.some(c =>
+      Math.hypot(c[0]*scale+MARGIN-x, c[1]*scale+MARGIN-y) < HANDLE*2.2);
+    if (!nearCorner && info.dist < 12 && info.t > 0.12 && info.t < 0.88) return i;
+  }
+  return -1;
+}
+
+function draw() {
+  if (!img) return;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.fillStyle = '#0d1015'; ctx.fillRect(0,0,cv.width,cv.height);   // the out-of-scan margin
+  ctx.drawImage(img, MARGIN, MARGIN, cv.width-2*MARGIN, cv.height-2*MARGIN);
+  const p = corners.map(c => [c[0]*scale + MARGIN, c[1]*scale + MARGIN]);
+  ctx.strokeStyle = '#4a9eff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
+  for (let i=1;i<4;i++) ctx.lineTo(p[i][0], p[i][1]);
+  ctx.closePath(); ctx.stroke();
+  // Make the grabbable side obvious while pointing at or dragging it.
+  const lit = dragEdge >= 0 ? dragEdge : hoverEdge;
+  if (lit >= 0) {
+    const a = p[lit], b = p[(lit+1)%4];
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  p.forEach(([x,y],i) => {
+    ctx.beginPath(); ctx.arc(x,y,HANDLE,0,Math.PI*2);
+    ctx.fillStyle = i===drag ? '#fff' : '#4a9eff'; ctx.fill();
+    ctx.strokeStyle = '#06121f'; ctx.lineWidth = 2; ctx.stroke();
+  });
+}
+
+/** Ask the server for exactly what Accept would produce. Throttled so it can
+ *  update during a drag without flooding. */
+function refreshPreview(immediate) {
+  if (!page) return;
+  clearTimeout(previewTimer);
+  const go = async () => {
+    lastPreview = Date.now();
+    const r = await fetch('/api/preview/' + encodeURIComponent(page.id), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ corners, rotation, target: format }) });
+    if (!r.ok) { q('outdims').textContent = 'invalid crop'; return; }
+    const blob = await r.blob();
+    if (previewEl.dataset.url) URL.revokeObjectURL(previewEl.dataset.url);
+    const url = URL.createObjectURL(blob);
+    previewEl.dataset.url = url;
+    previewEl.onload = drawGrid;
+    previewEl.src = url;
+    q('outdims').textContent =
+        `${r.headers.get('X-Out-Width')}×${r.headers.get('X-Out-Height')} px (${r.headers.get('X-Target')})`;
+  };
+  const since = Date.now() - lastPreview;
+  if (immediate || since > 250) go(); else previewTimer = setTimeout(go, 250 - since);
+}
+
+function at(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX-r.left)*(cv.width/r.width), (e.clientY-r.top)*(cv.height/r.height)];
+}
+cv.addEventListener('pointerdown', e => {
+  if (!page) return;
+  const [x,y] = at(e);
+  corners.forEach((c,i) => {
+    if (Math.hypot(c[0]*scale+MARGIN-x, c[1]*scale+MARGIN-y) < HANDLE*2.2) drag = i;
+  });
+  if (drag < 0) dragEdge = edgeAt(x, y);      // corners win; otherwise grab a side
+  if (drag >= 0 || dragEdge >= 0) {
+    pushHistory();
+    lastPt = [x, y];
+    cv.setPointerCapture(e.pointerId);
+    draw();
+  }
+});
+cv.addEventListener('pointermove', e => {
+  const [x,y] = at(e);
+  if (drag < 0 && dragEdge < 0) {                 // idle: just show what is grabbable
+    const h = edgeAt(x, y);
+    if (h !== hoverEdge) { hoverEdge = h; cv.style.cursor = h >= 0 ? 'move' : 'crosshair'; draw(); }
+    return;
+  }
+  if (drag >= 0) {
+    corners[drag] = [(x-MARGIN)/scale, (y-MARGIN)/scale];
+  } else {
+    // Move the whole side along its own normal, so it stays parallel and the
+    // opposite side is untouched - that is what "crop this edge in" means.
+    const i = dragEdge, j = (dragEdge+1)%4;
+    const a = [corners[i][0]*scale+MARGIN, corners[i][1]*scale+MARGIN];
+    const b = [corners[j][0]*scale+MARGIN, corners[j][1]*scale+MARGIN];
+    const { nx, ny } = segInfo([x,y], a, b);
+    const dx = x - lastPt[0], dy = y - lastPt[1];
+    const along = (dx*nx + dy*ny) / scale;        // perpendicular component only
+    corners[i] = [corners[i][0] + nx*along, corners[i][1] + ny*along];
+    corners[j] = [corners[j][0] + nx*along, corners[j][1] + ny*along];
+  }
+  lastPt = [x, y];
+  syncControls(); draw(); refreshPreview(false);
+});
+cv.addEventListener('pointerup', () => {
+  if (drag >= 0 || dragEdge >= 0) { drag = -1; dragEdge = -1; lastPt = null; draw(); refreshPreview(true); }
+});
+cv.addEventListener('pointerleave', () => { if (hoverEdge >= 0) { hoverEdge = -1; draw(); } });
+
+function say(m, c) { const el=document.getElementById('status'); el.textContent=m; el.style.color=c||'var(--dim)'; }
+async function accept() {
+  if (!page) return;
+  const r = await fetch('/api/accept/'+encodeURIComponent(page.id), {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ corners, rotation, target: format }) });
+  const j = await r.json();
+  say(r.ok ? `accepted ${j.width}×${j.height} (${j.target})` : 'accept failed',
+      r.ok ? 'var(--ok)' : 'var(--err)');
+  await load();
+}
+async function reject() {
+  if (!page) return;
+  await fetch('/api/reject/'+encodeURIComponent(page.id), { method:'POST' });
+  say('rejected', 'var(--warn)'); await load();
+}
+async function finalize() {
+  const r = await fetch('/api/finalize', { method:'POST' });
+  const j = await r.json();
+  say(r.ok ? `sent ${j.pdf} (${j.pages} pages)` : 'send failed', r.ok?'var(--ok)':'var(--err)');
+  await load();
+}
+load();
+setInterval(() => { if (!page) load(); }, 4000);
+</script>

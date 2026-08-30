@@ -1,0 +1,21 @@
+# credentials - NEVER commit
+secrets.env
+
+# scanned documents contain personal data
+spool/
+spool-archive/
+originals/
+out/
+work/
+scans/
+groundtruth/
+mock-paperless/
+state.json
+
+# build / tooling
+.venv/
+node_modules/
+__pycache__/
+test-results/
+.omc/
+*.pyc
