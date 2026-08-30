@@ -40,6 +40,8 @@ const state = {
   format: 'A4', orientation: 'portrait', rotation: 0,
   view: { zoom: 1, panX: 0, panY: 0 },
   mode: 'crop', grid: true, peek: false, pageSetup: false, history: [],
+  // Wide screens have room for the filename inline; a phone does not.
+  titleOpen: window.matchMedia('(min-width: 561px)').matches,
 };
 window.state = state;
 
@@ -549,6 +551,15 @@ function togglePageSetup() {
 }
 window.togglePageSetup = togglePageSetup;
 
+function applyTitleState() {
+  const el = q('title-toggle');
+  el.classList.toggle('open', state.titleOpen);
+  el.setAttribute('aria-expanded', String(state.titleOpen));
+  el.title = state.titleOpen ? 'Hide page name' : 'Show page name';
+}
+function toggleTitle() { state.titleOpen = !state.titleOpen; applyTitleState(); }
+window.toggleTitle = toggleTitle;
+
 function toggleGrid() {
   state.grid = !state.grid;
   q('grid-toggle').setAttribute('aria-pressed', String(state.grid));
@@ -649,7 +660,12 @@ async function load() {
   state.peek = false;
   const r = await fetch('/api/queue');
   const data = await r.json();
-  q('queue-count').textContent = `${data.pending.length} pending`;
+  // Progress through the session, not just what is left: `document` holds the
+  // pages already accepted, so this counts up 1/6, 2/6 ... as you work.
+  const done = (data.document || []).length;
+  const total = done + data.pending.length;
+  q('queue-count').textContent = total ? `${done + 1}/${total}` : '0/0';
+  applyTitleState();
   if (!data.pending.length) {
     state.page = null; state.img = null; state.frame = null;
     q('page-title').textContent = 'queue empty';

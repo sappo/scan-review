@@ -59,7 +59,7 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
-    npx playwright test                     # 72 e2e (36 mobile, 36 desktop)
+    npx playwright test                     # 78 e2e (39 mobile, 39 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -198,6 +198,11 @@ Gestures:
 
 **Gridlines** - a blue grid plus a stronger red centre cross, clipped to the
 frame and therefore aligned to the output. On its own canvas layer, toggleable.
+
+The title bar shows the **queue position** - `1/6`, counting up as pages are
+accepted, not just what is left. On a phone it collapses to that badge between
+the two button clusters and expands onto its own row when tapped; a filename has
+nowhere near enough width to be legible inline on a 412px screen.
 
 **Controls float** over a full-bleed canvas as translucent pills rather than
 sitting in a docked panel, so the scan gets the whole screen. Buttons are

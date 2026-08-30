@@ -415,6 +415,7 @@ test('buttons are icon-only, apart from the format chips', async ({ page }) => {
                    aria: b.getAttribute('aria-label') })));
   for (const b of labelled) {
     if (/^fmt-A[456]$/.test(b.id)) { expect(b.text).toMatch(/^A[456]$/); continue; }
+    if (b.id === 'title-toggle') { expect(b.text).toBeTruthy(); continue; }
     expect(b.text, `${b.id} should have no visible text`).toBe('');
     expect(b.svg, `${b.id} should carry an icon`).toBe(true);
     // Icon-only means the accessible name has to come from somewhere.
@@ -562,8 +563,70 @@ test('the queue count is legible and never truncated away', async ({ page }) => 
              scroll: c.scrollWidth, client: c.clientWidth,
              size: parseFloat(cs.fontSize) };
   });
-  expect(info.text).toMatch(/\d+ pending/);
+  expect(info.text).toMatch(/^\d+\/\d+$/);
   expect(info.w).toBeGreaterThan(20);                        // laid out, not collapsed
   expect(info.scroll).toBeLessThanOrEqual(info.client + 1);  // not clipped
   expect(info.size).toBeGreaterThanOrEqual(13);
+});
+
+test('the title collapses to a queue position on mobile and expands on tap',
+  async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mobile', 'phone layout only');
+    await ready(page);
+    const toggle = page.getByTestId('title-toggle');
+
+    // Collapsed: just "n/m", small enough to sit between the button clusters.
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByTestId('page-title')).toBeHidden();
+    await expect(page.getByTestId('queue-count')).toBeVisible();
+    const narrow = (await toggle.boundingBox()).width;
+    const vw = await page.evaluate(() => innerWidth);
+    expect(narrow).toBeLessThan(vw / 3);
+    // ...and it shares the row with the buttons rather than taking its own.
+    const rowShared = await page.evaluate(() => {
+      const t = document.querySelector('[data-testid=title-toggle]').getBoundingClientRect();
+      // Compare pill to pill: the button sits 5px inside its own pill.
+      const b = document.querySelector('[data-testid=btn-accept]')
+                  .closest('.pill').getBoundingClientRect();
+      return Math.abs(t.top - b.top) < 4;
+    });
+    expect(rowShared).toBe(true);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('page-title')).toBeVisible();
+    const wide = (await toggle.boundingBox()).width;
+    expect(wide).toBeGreaterThan(vw * 0.8);
+
+    await toggle.click();
+    await expect(page.getByTestId('page-title')).toBeHidden();
+  });
+
+test('the queue position counts up as pages are accepted', async ({ page }) => {
+  await ready(page);
+  const first = await page.getByTestId('queue-count').textContent();
+  expect(first).toMatch(/^1\/(\d+)$/);
+  const total = Number(first.split('/')[1]);
+  await page.getByTestId('btn-accept').click();
+  await expect(page.getByTestId('status')).toContainText('accepted');
+  await expect(page.getByTestId('queue-count')).toHaveText(`2/${total}`);
+});
+
+test('the floating controls never cover the frame corners', async ({ page }) => {
+  await ready(page);
+  // A control laid over a corner silently eats the drag that would resize it.
+  const clash = await page.evaluate(() => {
+    const r = window.frameRectOnScreen();
+    const dpr = window.devicePixelRatio || 1;
+    const cvBox = document.getElementById('cv').getBoundingClientRect();
+    const corners = [[r.x, r.y], [r.x + r.w, r.y],
+                     [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]
+      .map(([x, y]) => [cvBox.x + x / dpr, cvBox.y + y / dpr])
+      .filter(([x, y]) => x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight);
+    return corners.map(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return el && el.id === 'cv' ? null : (el && (el.dataset.testid || el.className));
+    }).filter(Boolean);
+  });
+  expect(clash).toEqual([]);
 });
