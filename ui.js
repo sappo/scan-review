@@ -141,8 +141,28 @@ window.addEventListener('resize', resize);
 
 // ------------------------------------------------------------------ render
 
+/** True when nothing has been changed on this page, so Reset has no work. */
+function isPristine() {
+  const s = state.page && state.page.seeded;
+  if (!s || !state.frame) return true;
+  const f = state.frame;
+  return Math.abs(f.cx - s.cx) < 0.01 && Math.abs(f.cy - s.cy) < 0.01
+      && Math.abs(f.w - s.w) < 0.01 && Math.abs(f.h - s.h) < 0.01
+      && Math.abs(f.angle - s.angle) < 1e-6
+      && state.format === s.format && state.orientation === s.orientation
+      && state.rotation === 0;
+}
+window.isPristine = isPristine;
+
+function syncActions() {
+  q('btn-undo').disabled = state.history.length === 0;
+  q('btn-reset').disabled = isPristine();
+}
+window.syncActions = syncActions;
+
 function render() {
   if (!ctx) return;
+  syncActions();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#0d0f13';
   ctx.fillRect(0, 0, cv.width, cv.height);
@@ -321,6 +341,12 @@ window.applyResize = applyResize;
 // --------------------------------------------------------------- gestures
 
 let grab = null, grabStart = null, grabFrame = null, moveArmed = true;
+// Pushed on the first actual change of a gesture, not on pointerdown: a tap
+// that moves nothing must not light up Undo.
+let gesturePushed = false;
+function pushOnce() {
+  if (!gesturePushed) { pushHistory(); gesturePushed = true; }
+}
 
 /** How much of the finger's travel the frame takes, by zoom.
  *
@@ -350,10 +376,10 @@ cv.addEventListener('pointerdown', e => {
   if (!state.frame || state.peek) return;
   const hit = hitTest(canvasPt(e));
   if (!hit.kind) return;                    // outside: do nothing at all
-  pushHistory();
   // A move does not start until the finger has actually travelled. Without
   // this a tap or a little jitter shifts a crop that was already settled.
   grab = hit;
+  gesturePushed = false;
   grabStart = canvasPt(e);
   grabFrame = { ...state.frame };
   moveArmed = hit.kind !== 'move';
@@ -383,6 +409,7 @@ cv.addEventListener('pointermove', e => {
     grabFrame = { ...state.frame };
     return;
   }
+  pushOnce();
   if (grab.kind === 'move') {
     const g = moveGain();
     const [dx, dy] = screenDeltaToImage(
@@ -473,14 +500,16 @@ window.drawDial = drawDial;
 // on every move event.
 let dialGrab = null;
 dial.addEventListener('pointerdown', e => {
-  pushHistory();
-  dialGrab = { x: e.clientX, start: dialValue() };
+  dialGrab = { x: e.clientX, start: dialValue(), pushed: false };
   dial.setPointerCapture(e.pointerId);
 });
 dial.addEventListener('pointermove', e => {
   if (!dialGrab) return;
   const pxPerDeg = dial.clientWidth / (DIAL_RANGE * 2);
-  setDial(dialGrab.start + (e.clientX - dialGrab.x) / pxPerDeg);
+  const next = dialGrab.start + (e.clientX - dialGrab.x) / pxPerDeg;
+  if (Math.abs(next - dialValue()) < DIAL_STEP / 2) return;   // no step yet
+  if (!dialGrab.pushed) { pushHistory(); dialGrab.pushed = true; }
+  setDial(next);
 });
 for (const ev of ['pointerup', 'pointercancel'])
   dial.addEventListener(ev, () => { dialGrab = null; });

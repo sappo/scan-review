@@ -303,8 +303,9 @@ test('reset clears the undo history too', async ({ page }) => {
   await page.evaluate(() => window.setDial(3));
   await page.getByTestId('btn-reset').click();
   expect(await page.evaluate(() => window.state.history.length)).toBe(0);
-  // Undo after Reset must not walk back into the discarded edits.
-  await page.getByTestId('btn-undo').click();
+  // Undo cannot walk back into the discarded edits, because with an empty
+  // history there is nothing to undo and the button is disabled.
+  await expect(page.getByTestId('btn-undo')).toBeDisabled();
   const f = await frameOf(page);
   expect(f.w).toBeCloseTo(seeded.w, 4);
   expect(f.angle).toBeCloseTo(seeded.angle, 6);
@@ -801,4 +802,56 @@ test('the top bar stays on one row at common phone widths', async ({ page }, tes
     expect(bottom.visibleBars, `two bars visible at ${width}px`).toBe(1);
     await expect(page.getByTestId('toolbar-sep')).toBeVisible();
   }
+});
+
+test('undo and reset are disabled when there is nothing to undo or reset',
+  async ({ page }) => {
+    await ready(page);
+    const undo = page.getByTestId('btn-undo');
+    const reset = page.getByTestId('btn-reset');
+    await expect(undo).toBeDisabled();
+    await expect(reset).toBeDisabled();
+
+    // A tap that changes nothing must not enable them.
+    const box = await page.getByTestId('canvas').boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    await page.mouse.move(cx + 3, cy + 2); await page.mouse.up();
+    await expect(undo).toBeDisabled();
+    await expect(reset).toBeDisabled();
+
+    // A real change enables both.
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    await page.mouse.move(cx + 70, cy + 50, { steps: 10 }); await page.mouse.up();
+    await expect(undo).toBeEnabled();
+    await expect(reset).toBeEnabled();
+
+    // Undoing back to the start disables them again.
+    await undo.click();
+    await expect(undo).toBeDisabled();
+    await expect(reset).toBeDisabled();
+  });
+
+test('reset disables itself once it has been used', async ({ page }) => {
+  await ready(page);
+  await page.evaluate(() => { window.pushHistory(); window.setDial(2.0); });
+  await expect(page.getByTestId('btn-reset')).toBeEnabled();
+  await page.getByTestId('btn-reset').click();
+  await expect(page.getByTestId('btn-reset')).toBeDisabled();
+  // Reset clears the history too, so Undo has nothing left either.
+  await expect(page.getByTestId('btn-undo')).toBeDisabled();
+});
+
+test('a tap on the dial that moves nothing does not enable undo', async ({ page }) => {
+  await ready(page);
+  await page.getByTestId('mode-straighten').click();
+  const box = await page.getByTestId('dial').boundingBox();
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.up();
+  await expect(page.getByTestId('btn-undo')).toBeDisabled();
+  // One pixel of drag IS a real step - the dial runs at about 11px per degree,
+  // so a pixel snaps to 0.1 - and must therefore enable it.
+  await page.mouse.move(x, y); await page.mouse.down();
+  await page.mouse.move(x + 4, y); await page.mouse.up();
+  await expect(page.getByTestId('btn-undo')).toBeEnabled();
 });

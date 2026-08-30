@@ -122,7 +122,7 @@ collided with the first. `scanui.py` now passes `a4-<timestamp>`.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 92 e2e (46 mobile, 46 desktop)
+    npx playwright test                     # 98 e2e (49 mobile, 49 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -293,6 +293,11 @@ icon-only, from a vendored Lucide sprite (`build-icons.js` -> `icons.svg`); no
 CDN, so the UI works without internet and a page showing scanned documents makes
 no third-party requests. The A4/A5/A6 chips stay textual - there is no icon for
 "A4".
+
+**Undo and Reset** are disabled when they have nothing to do - undo when the
+history is empty, reset when the frame still matches the seed exactly. History
+is pushed on the first real change of a gesture rather than on pointerdown, so
+a tap that moves nothing does not light Undo up.
 
 **Navigation** - the badge in the top bar reads the position in the queue,
 `1/4`, with a chevron either side to step through it. Bounded rather than
