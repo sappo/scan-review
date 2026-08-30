@@ -59,7 +59,7 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
-    npx playwright test                     # 40 e2e (20 mobile, 20 desktop)
+    npx playwright test                     # 62 e2e (31 mobile, 31 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -169,18 +169,27 @@ Two modes:
 
 Gestures:
 
-- One finger in the **grab band** hugging the border resizes, holding the ratio
-  and anchoring the opposite corner or edge. Corners win where they overlap an
-  edge. The band is `min(24px, a quarter of the frame's smaller screen
-  dimension)` - a fixed band would swallow a small frame's interior and leave
-  nothing to grab for moving.
-- One finger in the **interior core** moves the whole frame.
+- One finger on a **corner** resizes, holding the ratio and anchoring the
+  opposite corner. Corners only: with the ratio locked, dragging a side cannot
+  mean what it looks like it means - the other dimension has to follow - so a
+  side handle reads as a promise the geometry cannot keep. The grab zone is
+  `min(24px, a quarter of the frame's smaller screen dimension)`, so a small
+  frame still keeps a movable core.
+- One finger in the **interior** moves the whole frame, but only after ~10px of
+  travel. Without that threshold a tap or a little jitter shifts a settled crop.
 - One finger **outside the frame does nothing**, so steadying the phone at the
   edge of the screen cannot nudge a crop that was already settled.
 - **Two fingers** pan and zoom the view (1x to 8x) and never touch the frame.
 
 **Gridlines** - a blue grid plus a stronger red centre cross, clipped to the
 frame and therefore aligned to the output. On its own canvas layer, toggleable.
+
+**Controls float** over a full-bleed canvas as translucent pills rather than
+sitting in a docked panel, so the scan gets the whole screen. Buttons are
+icon-only, from a vendored Lucide sprite (`build-icons.js` -> `icons.svg`); no
+CDN, so the UI works without internet and a page showing scanned documents makes
+no third-party requests. The A4/A5/A6 chips stay textual - there is no icon for
+"A4".
 
 **Peek** flips to the warped result full-screen, rendered by the same endpoint
 Accept uses.
@@ -189,12 +198,16 @@ Accept uses.
 Ratios come from `PAPER_MM`, not from sqrt(2): the ISO sizes are whole
 millimetres, so A4 (1.414286), A5 (1.418919) and A6 (1.409524) genuinely differ.
 **Swap orientation** transposes the frame; **Rotate 90** is a different control,
-cycling the output rotation applied after warp for a sheet fed upside down.
+cycling the output rotation applied after warp for a sheet fed upside down. The
+whole view turns with it, so the rotation is visible rather than showing up only
+in the finished PDF.
 
 **The frame may lie outside the scan, and is never clamped.** A sheet fed flush
 to the leading edge genuinely has a corner beyond the captured area; clamping it
 deformed the quad and left 3 degrees of residual skew on a real A6. That region
-is hatched on the canvas, warned about, and filled white in the output.
+is hatched on the canvas and filled white in the output. The warning only fires
+past 12px of overhang: the seeded A4 for a full-width scan lands about 3px proud
+of the top edge, and flagging that made the warning noise on an ordinary page.
 
 ## Ground truth: measuring the detector
 

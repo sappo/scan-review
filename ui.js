@@ -20,7 +20,8 @@ for (const [k, [w, h]] of Object.entries(PAPER_MM)) RATIO[k] = h / w;
 
 const MIN_SIDE = 64;      // source px; warp() dies under 8, and a frame smaller
                           // than its own grab band is unusable
-const BAND_MAX = 24;      // screen px either side of the border
+const BAND_MAX = 24;        // screen px: half-extent of a corner's grab zone
+const MOVE_THRESHOLD = 10;  // screen px of travel before a move begins
 const ZOOM_MIN = 1, ZOOM_MAX = 8;
 const DIAL_RANGE = 15;    // degrees either side of the detected angle
 
@@ -68,9 +69,13 @@ function baseScale() {
                   (cv.height - pad) / state.img.naturalHeight);
 }
 
+/** Degrees the whole view is turned by, so the output rotation is VISIBLE
+ *  rather than only showing up in the final PDF. */
+function viewRot() { return state.rotation; }
+
 function toScreen([x, y]) {
   const f = state.frame, v = state.view, s = baseScale() * v.zoom;
-  const a = -f.angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const a = (viewRot() - f.angle) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
   const dx = x - f.cx, dy = y - f.cy;
   return [cv.width / 2 + v.panX + (dx * ca - dy * sa) * s,
           cv.height / 2 + v.panY + (dx * sa + dy * ca) * s];
@@ -79,7 +84,7 @@ function toImage([sx, sy]) {
   const f = state.frame, v = state.view, s = baseScale() * v.zoom;
   const px = (sx - cv.width / 2 - v.panX) / s;
   const py = (sy - cv.height / 2 - v.panY) / s;
-  const a = f.angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const a = (f.angle - viewRot()) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
   return [f.cx + px * ca - py * sa, f.cy + px * sa + py * ca];
 }
 window.toScreen = toScreen; window.toImage = toImage;
@@ -87,7 +92,9 @@ window.toScreen = toScreen; window.toImage = toImage;
 /** The frame as an axis-aligned screen rectangle - it is never tilted here. */
 function frameRectOnScreen() {
   const f = state.frame, v = state.view, s = baseScale() * v.zoom;
-  const w = f.w * s, h = f.h * s;
+  // At 90/270 the frame is still axis-aligned on screen, but lying on its side.
+  const turned = viewRot() % 180 !== 0;
+  const w = (turned ? f.h : f.w) * s, h = (turned ? f.w : f.h) * s;
   return { x: cv.width / 2 + v.panX - w / 2, y: cv.height / 2 + v.panY - h / 2, w, h };
 }
 window.frameRectOnScreen = frameRectOnScreen;
@@ -121,7 +128,7 @@ function render() {
   const f = state.frame, v = state.view, s = baseScale() * v.zoom;
   ctx.save();
   ctx.translate(cv.width / 2 + v.panX, cv.height / 2 + v.panY);
-  ctx.rotate(-f.angle * Math.PI / 180);
+  ctx.rotate((viewRot() - f.angle) * Math.PI / 180);
   ctx.scale(s, s);
   ctx.translate(-f.cx, -f.cy);
   ctx.drawImage(state.img, 0, 0);
@@ -179,15 +186,6 @@ function drawBrackets(r) {
     ctx.moveTo(x + sx * L, y); ctx.lineTo(x, y); ctx.lineTo(x, y + sy * L);
     ctx.stroke();
   }
-  // Edge midpoint ticks: the visible affordance for the grab band, which is
-  // deliberately more forgiving than the tick itself.
-  const T = Math.min(26, r.w / 5, r.h / 5);
-  ctx.beginPath();
-  ctx.moveTo(r.x + r.w / 2 - T / 2, r.y); ctx.lineTo(r.x + r.w / 2 + T / 2, r.y);
-  ctx.moveTo(r.x + r.w / 2 - T / 2, r.y + r.h); ctx.lineTo(r.x + r.w / 2 + T / 2, r.y + r.h);
-  ctx.moveTo(r.x, r.y + r.h / 2 - T / 2); ctx.lineTo(r.x, r.y + r.h / 2 + T / 2);
-  ctx.moveTo(r.x + r.w, r.y + r.h / 2 - T / 2); ctx.lineTo(r.x + r.w, r.y + r.h / 2 + T / 2);
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -221,10 +219,10 @@ function drawGrid(r) {
 
 // ------------------------------------------------------------- hit testing
 
-/** Grab band half-width, in canvas px.
+/** Half-extent of a corner's grab zone, in canvas px.
  *
  * Capped at a quarter of the frame's smaller screen dimension: a fixed 24px
- * band would swallow the interior of a small or zoomed-out frame and leave
+ * zone would swallow the interior of a small or zoomed-out frame and leave
  * nothing to grab for moving it.
  */
 function bandWidth() {
@@ -240,16 +238,13 @@ function hitTest([sx, sy]) {
   const dpr = window.devicePixelRatio || 1;
   const corner = Math.max(22 * dpr, b);     // 44px touch target, half-extent
   const pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
-  for (let i = 0; i < 4; i++) {
-    if (Math.abs(sx - pts[i][0]) <= corner && Math.abs(sy - pts[i][1]) <= corner)
-      return { kind: 'corner', ix: i };     // corners win where they overlap an edge
+  const turn = ((viewRot() / 90) | 0) % 4;
+  for (let s = 0; s < 4; s++) {
+    if (Math.abs(sx - pts[s][0]) <= corner && Math.abs(sy - pts[s][1]) <= corner)
+      // Screen corner -> frame corner. With the view turned by 90 the frame's
+      // top-left is drawn at the screen's top-right.
+      return { kind: 'corner', ix: (s - turn + 4) % 4 };
   }
-  const inX = sx >= r.x - b && sx <= r.x + r.w + b;
-  const inY = sy >= r.y - b && sy <= r.y + r.h + b;
-  if (inX && Math.abs(sy - r.y) <= b) return { kind: 'edge', ix: 0 };
-  if (inY && Math.abs(sx - (r.x + r.w)) <= b) return { kind: 'edge', ix: 1 };
-  if (inX && Math.abs(sy - (r.y + r.h)) <= b) return { kind: 'edge', ix: 2 };
-  if (inY && Math.abs(sx - r.x) <= b) return { kind: 'edge', ix: 3 };
   if (sx > r.x && sx < r.x + r.w && sy > r.y && sy < r.y + r.h)
     return { kind: 'move', ix: -1 };
   return { kind: null, ix: -1 };            // outside: inert, so steadying the
@@ -276,22 +271,14 @@ function applyResize(kind, ix, imgPt) {
   const ratio = ratioOf(state.format, state.orientation);
   const [lx, ly] = toLocal(imgPt);
   const hw = f.w / 2, hh = f.h / 2;
-  let nw, nh, ax, ay;                       // new size, and the anchor in local coords
-  if (kind === 'corner') {
-    const sx = (ix === 0 || ix === 3) ? -1 : 1;
-    const sy = (ix === 0 || ix === 1) ? -1 : 1;
-    ax = -sx * hw; ay = -sy * hh;           // the opposite corner, pinned
-    const cw = Math.abs(lx - ax), ch = Math.abs(ly - ay);
-    nw = Math.max(cw, ch / ratio); nh = nw * ratio;
-  } else if (ix === 0 || ix === 2) {        // top or bottom edge
-    const sy = ix === 0 ? -1 : 1;
-    ay = -sy * hh; ax = 0;
-    nh = Math.abs(ly - ay); nw = nh / ratio;
-  } else {                                  // left or right edge
-    const sx = ix === 3 ? -1 : 1;
-    ax = -sx * hw; ay = 0;
-    nw = Math.abs(lx - ax); nh = nw * ratio;
-  }
+  // Corners only. With the ratio locked, dragging a side cannot mean what it
+  // looks like it means - the opposite dimension has to follow - so a side
+  // handle reads as a promise the geometry cannot keep.
+  const sx = (ix === 0 || ix === 3) ? -1 : 1;
+  const sy = (ix === 0 || ix === 1) ? -1 : 1;
+  const ax = -sx * hw, ay = -sy * hh;       // the opposite corner, pinned
+  const cw = Math.abs(lx - ax), ch = Math.abs(ly - ay);
+  let nw = Math.max(cw, ch / ratio), nh = nw * ratio;
   if (Math.min(nw, nh) < MIN_SIDE) return;  // warp() dies on a degenerate crop
   // Recentre so the anchor point does not move.
   const dirX = ax <= 0 ? 1 : -1, dirY = ay <= 0 ? 1 : -1;
@@ -302,7 +289,7 @@ window.applyResize = applyResize;
 
 // --------------------------------------------------------------- gestures
 
-let grab = null, lastImg = null;
+let grab = null, lastImg = null, grabStart = null, moveArmed = true;
 const touches = new Map();
 let pinch = null;
 
@@ -322,7 +309,11 @@ cv.addEventListener('pointerdown', e => {
   const hit = hitTest(canvasPt(e));
   if (!hit.kind) return;                    // outside: do nothing at all
   pushHistory();
+  // A move does not start until the finger has actually travelled. Without
+  // this a tap or a little jitter shifts a crop that was already settled.
   grab = hit; lastImg = toImage(canvasPt(e));
+  grabStart = canvasPt(e);
+  moveArmed = hit.kind !== 'move';
   cv.setPointerCapture(e.pointerId);
 });
 
@@ -339,7 +330,16 @@ cv.addEventListener('pointermove', e => {
     return;
   }
   if (!grab) return;
-  const img = toImage(canvasPt(e));
+  const pt = canvasPt(e);
+  if (!moveArmed) {
+    const dpr = window.devicePixelRatio || 1;
+    if (Math.hypot(pt[0] - grabStart[0], pt[1] - grabStart[1]) < MOVE_THRESHOLD * dpr)
+      return;                               // below the threshold: ignore entirely
+    moveArmed = true;
+    lastImg = toImage(pt);                  // re-anchor so the frame does not jump
+    return;
+  }
+  const img = toImage(pt);
   if (grab.kind === 'move') {
     state.frame.cx += img[0] - lastImg[0];
     state.frame.cy += img[1] - lastImg[1];
@@ -354,7 +354,7 @@ for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
   cv.addEventListener(ev, e => {
     touches.delete(e.pointerId);
     if (touches.size < 2) pinch = null;
-    if (grab) { grab = null; lastImg = null; render(); }
+    if (grab) { grab = null; lastImg = null; grabStart = null; moveArmed = true; render(); }
   });
 }
 
@@ -491,7 +491,9 @@ function undo() {
 function resetFrame() {
   const s = state.page && state.page.seeded;
   if (!s) return;
-  pushHistory();
+  // Reset means "back to how this page arrived", so the undo stack goes too -
+  // otherwise Undo after Reset walks back into edits that were just discarded.
+  state.history = [];
   state.frame = { cx: s.cx, cy: s.cy, w: s.w, h: s.h, angle: s.angle };
   state.format = s.format; state.orientation = s.orientation; state.rotation = 0;
   syncChips();
@@ -534,13 +536,24 @@ window.togglePeek = togglePeek;
 
 // ----------------------------------------------------------------- actions
 
-/** How much of the frame falls outside the scan - drives the warning. */
+// A few pixels of overhang is normal and not worth a warning: the seeded A4 for
+// a full-width scan lands ~3px proud of the top edge, and warning on that makes
+// the flag noise on an ordinary page. Warn on overhang a human would notice.
+const OUTSIDE_TOL_PX = 12;
+
+/** How far the frame reaches beyond the scan, in source px (0 if inside). */
+function outsideOverhangPx() {
+  const W = state.page.width, H = state.page.height;
+  return cornersOf(state.frame).reduce((m, [x, y]) => Math.max(
+    m, -x, -y, x - (W - 1), y - (H - 1)), 0);
+}
 function outsideFraction() {
   const p = cornersOf(state.frame), W = state.page.width, H = state.page.height;
   return p.filter(([x, y]) => x < 0 || y < 0 || x > W - 1 || y > H - 1).length / 4;
 }
+window.outsideOverhangPx = outsideOverhangPx;
 function showFlags() {
-  q('outside-flag').hidden = outsideFraction() === 0;
+  q('outside-flag').hidden = outsideOverhangPx() <= OUTSIDE_TOL_PX;
   const h = state.page && state.page.hint;
   q('hint-mismatch').hidden = !(h && h !== state.format);
 }

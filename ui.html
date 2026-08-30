@@ -3,102 +3,146 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Scan Review</title>
 <style>
-  :root { --bg:#0d0f13; --panel:#171b22; --line:#2c3442; --text:#e6eaf0;
-          --dim:#8b95a5; --accent:#4a9eff; --err:#f85149; --warn:#d29922; }
+  :root { --bg:#0d0f13; --line:#2c3442; --text:#e6eaf0; --dim:#8b95a5;
+          --accent:#4a9eff; --err:#f85149; --warn:#d29922;
+          --float:rgba(28,33,42,0.82); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* Any class that sets `display` beats the UA stylesheet's [hidden] rule, so
+     `.hidden = true` silently does nothing on .pill. State it once, globally,
+     rather than remembering to guard every display-setting class. */
+  [hidden] { display:none !important; }
   html,body { height:100%; margin:0; overscroll-behavior:none; }
-  body { background:var(--bg); color:var(--text); display:flex; flex-direction:column;
+  body { background:var(--bg); color:var(--text); position:relative;
          font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  #top { display:flex; align-items:center; gap:10px; padding:8px 12px;
-         padding-top:calc(8px + env(safe-area-inset-top)); }
+
+  /* The canvas fills the whole screen; every control floats above it. */
+  #stage { position:absolute; inset:0; }
+  #cv, #grid { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #cv { touch-action:none; }
+  #grid { pointer-events:none; }
+
+  .bar { position:absolute; left:0; right:0; display:flex; align-items:center;
+         gap:10px; padding:10px 12px; pointer-events:none; }
+  #top { top:0; padding-top:calc(10px + env(safe-area-inset-top)); }
   #top .grow { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
-               white-space:nowrap; color:var(--dim); font-size:13px; }
-  #stage { flex:1; position:relative; min-height:0; }
-  #cv { position:absolute; inset:0; width:100%; height:100%; touch-action:none;
-        display:block; }
-  /* The raster lives on its own layer so a test can count its painted pixels
-     unambiguously - over the scan, "no grid" and "greyish scan pixel" are not
-     distinguishable. */
-  #grid { position:absolute; inset:0; width:100%; height:100%; display:block;
-          pointer-events:none; }
-  #bottom { background:var(--panel); border-top:1px solid var(--line);
-            padding:10px 12px calc(6px + env(safe-area-inset-bottom)); }
-  .pill { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
-  button { min-height:44px; min-width:44px; padding:0 14px; border-radius:10px;
-           border:1px solid var(--line); background:#232a34; color:var(--text);
-           font-size:15px; }
-  button[aria-pressed=true] { background:var(--accent); border-color:var(--accent);
-                              color:#06121f; font-weight:600; }
-  button.primary { background:var(--accent); border-color:var(--accent);
-                   color:#06121f; font-weight:600; }
-  button.danger { background:#2a1d1f; border-color:#5c2a2e; color:#ffb4ad; }
-  #tabs { display:flex; gap:8px; margin-top:10px; }
-  #tabs button { flex:1; }
-  #dial { width:100%; height:56px; touch-action:none; display:block; }
-  .readout { text-align:center; font-variant-numeric:tabular-nums; color:var(--dim); }
-  .flag { color:var(--warn); font-size:13px; text-align:center; margin:4px 0 0; }
-  .flag[hidden] { display:none; }
-  #status { text-align:center; font-size:13px; min-height:18px; color:var(--dim); }
-  /* Grid, not flex-wrap. #stage's only child is an absolutely-positioned
-     canvas, so its flex-basis resolves to 0 - which means it always FITS in
-     whatever space is left on the header's line and never wraps, ending up
-     zero-wide with the canvas at width 0 and every frame coordinate negative.
-     A grid states the two columns outright and cannot do that. */
+               white-space:nowrap; color:var(--text); font-size:13px;
+               background:var(--float); border-radius:999px; padding:5px 12px;
+               backdrop-filter:blur(8px); pointer-events:auto; }
+
+  /* Floating clusters, bottom-centred, clear of the safe area. */
+  #controls { position:absolute; left:0; right:0;
+              bottom:calc(10px + env(safe-area-inset-bottom));
+              display:flex; flex-direction:column; align-items:center; gap:8px;
+              pointer-events:none; }
+  .pill { display:flex; gap:4px; align-items:center; padding:5px;
+          background:var(--float); border-radius:999px; backdrop-filter:blur(10px);
+          box-shadow:0 4px 20px rgba(0,0,0,.45); pointer-events:auto;
+          max-width:calc(100vw - 24px); flex-wrap:nowrap; }
+  .pill.wide { border-radius:18px; flex-wrap:wrap; justify-content:center; }
+
+  button { width:44px; height:44px; padding:0; border:0; border-radius:999px;
+           background:transparent; color:var(--text); display:grid;
+           place-items:center; pointer-events:auto; }
+  /* Also set here: <use> does not inherit presentation attributes from the
+     sprite's root <svg>, and without these the icons render as filled blobs. */
+  button svg { width:21px; height:21px; fill:none; stroke:currentColor;
+               stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  button[aria-pressed=true] { background:var(--accent); color:#06121f; }
+  button.primary { background:var(--accent); color:#06121f; }
+  button.danger { color:#ffb4ad; }
+  button.text { width:auto; min-width:44px; padding:0 14px; font-size:15px;
+                font-weight:600; letter-spacing:.02em; }
+  button:disabled { opacity:.35; }
+
+  #dialwrap { pointer-events:auto; background:var(--float); border-radius:18px;
+              backdrop-filter:blur(10px); padding:6px 10px 2px;
+              box-shadow:0 4px 20px rgba(0,0,0,.45); width:min(420px, calc(100vw - 24px)); }
+  #dial { width:100%; height:48px; touch-action:none; display:block; }
+  #panel-straighten { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .readout { text-align:center; font-variant-numeric:tabular-nums;
+             color:var(--dim); font-size:12px; padding-bottom:4px; }
+
+  .flag { pointer-events:auto; margin:0; max-width:calc(100vw - 24px);
+          background:rgba(58,44,12,.9); color:#ffd479; font-size:12.5px;
+          padding:6px 14px; border-radius:999px; text-align:center;
+          backdrop-filter:blur(8px); }
+  #status { pointer-events:none; font-size:12.5px; color:var(--dim);
+            min-height:0; text-align:center; }
+  #status:empty { display:none; }
+
+  /* Wide screens: the clusters move to a floating column on the right rather
+     than stacking over the middle of the page. */
   @media (min-width:900px) {
-    body { display:grid; grid-template-columns:1fr 320px; grid-template-rows:auto 1fr; }
-    #top { grid-column:1 / -1; }
-    #stage { min-width:0; min-height:0; }
-    #bottom { border-top:0; border-left:1px solid var(--line); overflow-y:auto; }
+    #controls { left:auto; right:14px; bottom:14px; top:auto;
+                align-items:flex-end; }
+    .pill.wide { flex-wrap:nowrap; }
   }
 </style>
-
-<div id="top">
-  <button data-testid="btn-undo" onclick="undo()" title="Undo">↶</button>
-  <span class="grow"><span data-testid="page-title">…</span>
-    · <span data-testid="queue-count"></span></span>
-  <button data-testid="btn-peek" onclick="togglePeek()" title="Preview result">⛶</button>
-  <button class="primary" data-testid="btn-accept" onclick="accept()">Accept</button>
-</div>
 
 <div id="stage">
   <canvas id="cv" data-testid="canvas"></canvas>
   <canvas id="grid" data-testid="grid"></canvas>
 </div>
 
-<div id="bottom">
-  <div id="panel-crop">
-    <div class="pill">
-      <button data-testid="fmt-A4" onclick="setFormat('A4')">A4</button>
-      <button data-testid="fmt-A5" onclick="setFormat('A5')">A5</button>
-      <button data-testid="fmt-A6" onclick="setFormat('A6')">A6</button>
-      <button data-testid="btn-swap" onclick="swapOrientation()" title="Swap orientation">⇄</button>
-      <button data-testid="btn-rotate" onclick="rotate90()" title="Rotate output 90°">⟳</button>
-    </div>
+<div class="bar" id="top">
+  <div class="pill">
+    <button data-testid="btn-undo" onclick="undo()" title="Undo" aria-label="Undo">
+      <svg><use href="/icons.svg#undo"/></svg></button>
+    <button data-testid="btn-reset" onclick="resetFrame()" title="Reset to detected" aria-label="Reset">
+      <svg><use href="/icons.svg#reset"/></svg></button>
   </div>
-  <div id="panel-straighten" hidden>
-    <canvas id="dial" data-testid="dial"></canvas>
-    <div class="readout"><span data-testid="angle-readout">0.00°</span></div>
-    <div class="pill">
-      <button data-testid="skew-minus-01" onclick="nudge(-0.1)">−0.1°</button>
-      <button data-testid="skew-plus-01" onclick="nudge(0.1)">+0.1°</button>
-    </div>
+  <span class="grow"><span data-testid="page-title">…</span>
+    · <span data-testid="queue-count"></span></span>
+  <div class="pill">
+    <button data-testid="btn-peek" onclick="togglePeek()" title="Preview result" aria-label="Preview result">
+      <svg><use href="/icons.svg#peek"/></svg></button>
+    <button class="danger" data-testid="btn-reject" onclick="reject()" title="Reject" aria-label="Reject">
+      <svg><use href="/icons.svg#reject"/></svg></button>
+    <button class="primary" data-testid="btn-accept" onclick="accept()" title="Accept" aria-label="Accept">
+      <svg><use href="/icons.svg#accept"/></svg></button>
   </div>
+</div>
 
-  <p class="flag" data-testid="hint-mismatch" hidden>Panel hint disagrees with detection.</p>
-  <p class="flag" data-testid="outside-flag" hidden>Crop extends past the scan; the
-    missing sliver is filled white rather than skewing the page.</p>
-
-  <div id="tabs">
-    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')">Crop</button>
-    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')">Straighten</button>
-  </div>
-  <div class="pill" style="margin-top:8px">
-    <button data-testid="btn-reset" onclick="resetFrame()">Reset</button>
-    <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()">Grid</button>
-    <button class="danger" data-testid="btn-reject" onclick="reject()">Reject</button>
-    <button data-testid="btn-finalize" onclick="finalize()">Send</button>
-  </div>
+<div id="controls">
   <div id="status" data-testid="status"></div>
+  <p class="flag" data-testid="hint-mismatch" hidden>Panel hint disagrees with detection</p>
+  <p class="flag" data-testid="outside-flag" hidden>Crop extends past the scan</p>
+
+  <!-- Format is the one place a glyph would be worse than the label: there is
+       no icon for "A4". -->
+  <div class="pill wide" id="panel-crop">
+    <button class="text" data-testid="fmt-A4" onclick="setFormat('A4')">A4</button>
+    <button class="text" data-testid="fmt-A5" onclick="setFormat('A5')">A5</button>
+    <button class="text" data-testid="fmt-A6" onclick="setFormat('A6')">A6</button>
+    <button data-testid="btn-swap" onclick="swapOrientation()" title="Swap orientation" aria-label="Swap orientation">
+      <svg><use href="/icons.svg#swap"/></svg></button>
+    <button data-testid="btn-rotate" onclick="rotate90()" title="Rotate output 90°" aria-label="Rotate 90 degrees">
+      <svg><use href="/icons.svg#rotate"/></svg></button>
+  </div>
+
+  <div id="panel-straighten" hidden>
+    <div id="dialwrap">
+      <canvas id="dial" data-testid="dial"></canvas>
+      <div class="readout"><span data-testid="angle-readout">+0.00°</span></div>
+    </div>
+    <div class="pill">
+      <button data-testid="skew-minus-01" onclick="nudge(-0.1)" title="−0.1°" aria-label="Minus a tenth of a degree">
+        <svg><use href="/icons.svg#minus"/></svg></button>
+      <button data-testid="skew-plus-01" onclick="nudge(0.1)" title="+0.1°" aria-label="Plus a tenth of a degree">
+        <svg><use href="/icons.svg#plus"/></svg></button>
+    </div>
+  </div>
+
+  <div class="pill">
+    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
+            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
+    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
+            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
+    <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
+            title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
+    <button data-testid="btn-finalize" onclick="finalize()"
+            title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg></button>
+  </div>
 </div>
 
 <script src="/ui.js"></script>

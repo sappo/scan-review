@@ -307,6 +307,10 @@ def preview(page_id: str, body: PreviewBody):
     out = result.image
     for _ in range((body.rotation // 90) % 4):
         out = cv2.rotate(out, cv2.ROTATE_90_CLOCKWISE)
+    # The true output size: after rotation, before the preview downscale. Both
+    # matter - warp's pre-rotation size disagrees at 90/270, and the resized
+    # `out` is only a thumbnail.
+    out_w, out_h = int(out.shape[1]), int(out.shape[0])
     if out.shape[1] > body.max_width:
         scale = body.max_width / out.shape[1]
         out = cv2.resize(out, (body.max_width, max(1, int(out.shape[0] * scale))),
@@ -315,7 +319,7 @@ def preview(page_id: str, body: PreviewBody):
     if not ok:
         raise HTTPException(500, "preview encode failed")
     return Response(content=buf.tobytes(), media_type="image/jpeg", headers={
-        "X-Out-Width": str(result.width_px), "X-Out-Height": str(result.height_px),
+        "X-Out-Width": str(out_w), "X-Out-Height": str(out_h),
         "X-Target": result.target, "X-Outside": f"{result.outside:.2f}",
     })
 
@@ -413,6 +417,15 @@ def finalize():
 @app.get("/api/deliveries")
 def deliveries():
     return json.loads(DELIVERY_LOG.read_text()) if DELIVERY_LOG.exists() else []
+
+
+@app.get("/icons.svg")
+def icons_svg():
+    # Vendored Lucide sprite (see build-icons.js). Served locally so the UI
+    # works without internet and makes no third-party requests from a page
+    # showing scanned documents.
+    return Response(content=(ROOT / "icons.svg").read_text(),
+                    media_type="image/svg+xml")
 
 
 @app.get("/ui.js")

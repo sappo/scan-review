@@ -66,7 +66,7 @@ test('a drag inside the frame core moves it without resizing', async ({ page }) 
   const box = await page.getByTestId('canvas').boundingBox();
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   await page.mouse.move(cx, cy); await page.mouse.down();
-  await page.mouse.move(cx + 40, cy + 25, { steps: 8 }); await page.mouse.up();
+  await page.mouse.move(cx + 60, cy + 45, { steps: 10 }); await page.mouse.up();
   const after = await frameOf(page);
   expect(after.w).toBeCloseTo(before.w, 6);
   expect(after.h).toBeCloseTo(before.h, 6);
@@ -224,6 +224,81 @@ test('rotate cycles output rotation without moving the frame', async ({ page }) 
   expect(await frameOf(page)).toEqual(before);
 });
 
+test('rotate visibly turns the view, not just a hidden flag', async ({ page }) => {
+  await ready(page);
+  const before = await page.evaluate(() => {
+    const r = window.frameRectOnScreen(); return { w: r.w, h: r.h };
+  });
+  await page.getByTestId('btn-rotate').click();
+  const after = await page.evaluate(() => {
+    const r = window.frameRectOnScreen(); return { w: r.w, h: r.h };
+  });
+  // At 90 the frame lies on its side on screen: the drawn rect transposes.
+  expect(after.w).toBeCloseTo(before.h, 6);
+  expect(after.h).toBeCloseTo(before.w, 6);
+});
+
+test('a corner still resizes correctly when the view is rotated', async ({ page }) => {
+  await ready(page);
+  await page.getByTestId('btn-rotate').click();            // view turned 90
+  const want = await page.evaluate(() => window.state.frame.h / window.state.frame.w);
+  // Screen top-left is the frame's bottom-left when turned 90, so the pinned
+  // corner is the frame's top-right (index 1).
+  const anchorBefore = await page.evaluate(() => window.cornersOf(window.state.frame)[1]);
+  const r = await page.evaluate(() => {
+    const q = window.frameRectOnScreen();
+    const b = document.getElementById('cv').getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    return { x: b.x + q.x / dpr, y: b.y + q.y / dpr };
+  });
+  await page.mouse.move(r.x, r.y); await page.mouse.down();
+  await page.mouse.move(r.x + 50, r.y + 50, { steps: 10 }); await page.mouse.up();
+  const f = await frameOf(page);
+  expect(f.h / f.w).toBeCloseTo(want, 9);
+  const anchorAfter = await page.evaluate(() => window.cornersOf(window.state.frame)[1]);
+  expect(anchorAfter[0]).toBeCloseTo(anchorBefore[0], 3);
+  expect(anchorAfter[1]).toBeCloseTo(anchorBefore[1], 3);
+});
+
+test('a small drag below the threshold does not move the frame', async ({ page }) => {
+  await ready(page);
+  const before = await frameOf(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy); await page.mouse.down();
+  await page.mouse.move(cx + 5, cy + 4, { steps: 4 }); await page.mouse.up();
+  expect(await frameOf(page)).toEqual(before);
+});
+
+test('the sides are not draggable - only corners resize', async ({ page }) => {
+  await ready(page);
+  const hits = await page.evaluate(() => {
+    const r = window.frameRectOnScreen();
+    return [
+      window.hitTest([r.x + r.w / 2, r.y]).kind,            // top edge midpoint
+      window.hitTest([r.x + r.w, r.y + r.h / 2]).kind,      // right edge midpoint
+      window.hitTest([r.x, r.y + r.h / 2]).kind,            // left edge midpoint
+      window.hitTest([r.x, r.y]).kind,                      // a corner, still live
+    ];
+  });
+  expect(hits.slice(0, 3)).not.toContain('edge');
+  expect(hits[3]).toBe('corner');
+});
+
+test('reset clears the undo history too', async ({ page }) => {
+  await ready(page);
+  const seeded = await page.evaluate(() => ({ ...window.state.page.seeded }));
+  await page.getByTestId('fmt-A6').click();
+  await page.evaluate(() => window.setDial(3));
+  await page.getByTestId('btn-reset').click();
+  expect(await page.evaluate(() => window.state.history.length)).toBe(0);
+  // Undo after Reset must not walk back into the discarded edits.
+  await page.getByTestId('btn-undo').click();
+  const f = await frameOf(page);
+  expect(f.w).toBeCloseTo(seeded.w, 4);
+  expect(f.angle).toBeCloseTo(seeded.angle, 6);
+});
+
 test('reset returns to the seeded frame after several edits', async ({ page }) => {
   await ready(page);
   const seeded = await page.evaluate(() => ({ ...window.state.page.seeded }));
@@ -301,4 +376,96 @@ test('finalize delivers a PDF to the paperless mock', async ({ page }) => {
   const n = execSync(`qpdf --show-npages ${path.join(consume, pdfs[pdfs.length - 1])}`)
     .toString().trim();
   expect(Number(n)).toBeGreaterThan(0);
+});
+
+test('every icon reference resolves to a symbol in the sprite', async ({ page, request }) => {
+  await ready(page);
+  const sprite = await (await request.get('/icons.svg')).text();
+  const defined = [...sprite.matchAll(/<symbol id="([^"]+)"/g)].map(m => m[1]);
+  const used = await page.evaluate(() =>
+    [...document.querySelectorAll('use')].map(u => u.getAttribute('href')));
+  expect(used.length).toBeGreaterThan(8);
+  for (const href of used) {
+    expect(href, 'icons must come from the vendored sprite, not a CDN')
+      .toMatch(/^\/icons\.svg#/);
+    // A typo'd id renders an empty button with no error, so assert resolution.
+    expect(defined, `unresolved icon ${href}`).toContain(href.split('#')[1]);
+  }
+});
+
+test('buttons are icon-only, apart from the format chips', async ({ page }) => {
+  await ready(page);
+  const labelled = await page.evaluate(() =>
+    [...document.querySelectorAll('button')]
+      .filter(b => b.offsetParent !== null)
+      .map(b => ({ id: b.dataset.testid, text: b.textContent.trim(),
+                   svg: !!b.querySelector('svg'),
+                   aria: b.getAttribute('aria-label') })));
+  for (const b of labelled) {
+    if (/^fmt-A[456]$/.test(b.id)) { expect(b.text).toMatch(/^A[456]$/); continue; }
+    expect(b.text, `${b.id} should have no visible text`).toBe('');
+    expect(b.svg, `${b.id} should carry an icon`).toBe(true);
+    // Icon-only means the accessible name has to come from somewhere.
+    expect(b.aria, `${b.id} needs an aria-label`).toBeTruthy();
+  }
+});
+
+test('controls float over a full-bleed canvas', async ({ page }) => {
+  await ready(page);
+  const geo = await page.evaluate(() => {
+    const cv = document.getElementById('cv').getBoundingClientRect();
+    const pill = document.querySelector('#controls .pill').getBoundingClientRect();
+    return { cv: { w: cv.width, h: cv.height }, pill: { top: pill.top, bottom: pill.bottom },
+             vw: innerWidth, vh: innerHeight };
+  });
+  // The canvas covers the viewport rather than being squeezed above a panel.
+  expect(geo.cv.w).toBeCloseTo(geo.vw, 0);
+  expect(geo.cv.h).toBeCloseTo(geo.vh, 0);
+  // ...and the controls sit on top of it, not below.
+  expect(geo.pill.bottom).toBeLessThanOrEqual(geo.vh);
+  expect(geo.pill.top).toBeGreaterThan(geo.vh / 2);
+});
+
+test('icons render as strokes, not filled blobs', async ({ page }) => {
+  await ready(page);
+  // <use> clones only the symbol's subtree, so attributes on the sprite's root
+  // <svg> are lost and the icon silently falls back to fill:black/stroke:none.
+  const style = await page.evaluate(() => {
+    const svg = document.querySelector('button svg');
+    const cs = getComputedStyle(svg);
+    return { fill: cs.fill, stroke: cs.stroke, width: cs.strokeWidth };
+  });
+  expect(style.fill).toBe('none');
+  expect(style.stroke).not.toBe('none');
+  expect(parseFloat(style.width)).toBeGreaterThan(0);
+});
+
+test('a few pixels of overhang does not raise the warning', async ({ page }) => {
+  await ready(page);
+  await page.evaluate(() => {
+    const p = window.state.page;
+    window.state.frame = { cx: p.width / 2, cy: p.height / 2,
+                           w: p.width + 6, h: (p.width + 6) * (297 / 210), angle: 0 };
+    window.state.frame.h = Math.min(window.state.frame.h, p.height);
+    window.render();
+  });
+  expect(await page.evaluate(() => window.outsideOverhangPx())).toBeLessThan(12);
+  await expect(page.getByTestId('outside-flag')).toBeHidden();
+
+  await page.evaluate(() => { window.state.frame.cy -= 300; window.render(); });
+  await expect(page.getByTestId('outside-flag')).toBeVisible();
+});
+
+test('switching mode really hides the other panel', async ({ page }) => {
+  await ready(page);
+  // `hidden` alone is not enough: a class setting `display` overrides the UA
+  // stylesheet, so assert on visibility rather than on the attribute.
+  await expect(page.getByTestId('fmt-A4')).toBeVisible();
+  await expect(page.getByTestId('dial')).toBeHidden();
+  await page.getByTestId('mode-straighten').click();
+  await expect(page.getByTestId('fmt-A4')).toBeHidden();
+  await expect(page.getByTestId('dial')).toBeVisible();
+  await page.getByTestId('mode-crop').click();
+  await expect(page.getByTestId('fmt-A4')).toBeVisible();
+  await expect(page.getByTestId('dial')).toBeHidden();
 });
