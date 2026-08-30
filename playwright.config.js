@@ -3,6 +3,7 @@ module.exports = {
   timeout: 30000,
   use: {
     headless: true,
+    baseURL: 'http://127.0.0.1:8765',
     viewport: { width: 1280, height: 1000 },
     // The service now requires basic auth; read it from the same file systemd uses.
     httpCredentials: (() => {

@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from detect import detect
+import frame as frame_mod
 from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
 
 ROOT = Path(__file__).parent
@@ -122,6 +123,12 @@ def ingest_spool(state):
             corners = det.corners.tolist()
             angle, coverage = det.angle_deg, det.coverage
         suggested = classify(corners) or "free"
+        # The seed fit runs HERE, on the server, and is frozen with `detected`.
+        # If the browser computed it, a stale client could report a starting
+        # frame it never displayed and the ground-truth dataset would overstate
+        # how often the detector was right.
+        seeded = (frame_mod.seed_frame(corners, suggested)
+                  if suggested in PAPER_MM else None)
         hint = None
         sidecar = path.with_suffix(path.suffix + ".json")
         if sidecar.exists():
@@ -147,17 +154,38 @@ def ingest_spool(state):
             "status": "pending",
             # Frozen at ingest so later edits cannot overwrite what was proposed.
             "detected": {"corners": corners, "angle": angle, "format": suggested},
+            "seeded": seeded,
         }
         state["ingested"].append(key)
         added.append(key)
     return added
 
 
+def backfill_seeds(state):
+    """Give pages ingested before the frame model a seeded frame.
+
+    Recomputed from the FROZEN `detected` corners, so a backfilled seed is
+    identical to one written at ingest - no data is invented.
+    """
+    changed = False
+    for page in state["pages"].values():
+        if page.get("seeded") is not None:
+            continue
+        det = page.get("detected") or {}
+        fmt = det.get("format")
+        if not det.get("corners") or fmt not in PAPER_MM:
+            continue
+        page["seeded"] = frame_mod.seed_frame(det["corners"], fmt)
+        changed = True
+    return changed
+
+
 def refresh():
     with _lock:
         s = load_state()
         added = ingest_spool(s)
-        if added:
+        filled = backfill_seeds(s)
+        if added or filled:
             save_state(s)
         return s, added
 
