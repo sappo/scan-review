@@ -32,11 +32,13 @@ ROOT = Path(__file__).parent
 SPOOL = ROOT / "spool"
 WORK = ROOT / "work"
 ARCHIVE = ROOT / "spool-archive"
+THUMB_LONG_SIDE = 160     # shown at 52px; 160 stays sharp on a dense screen
 OUT = ROOT / "out"
 CONSUME = ROOT / "mock-paperless" / "consume"
 TRUTH = ROOT / "groundtruth"
 DELIVERY_LOG = ROOT / "mock-paperless" / "deliveries.json"
 STATE = WORK / "state.json"
+THUMBS = WORK / "thumbs"
 DPI = 200
 MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 
@@ -301,6 +303,31 @@ def image(page_id: str):
         raise HTTPException(404, "unknown page")
     data = Path(page["source"]).read_bytes()
     return Response(content=data, media_type="image/png")
+
+
+@app.get("/api/thumb/{page_id}")
+def thumb(page_id: str):
+    """A small JPEG of the RAW scan, for the filmstrip.
+
+    Not the cropped result: the strip is an index of what is in the document,
+    and rendering every page through warp() on demand would be slow and would
+    shift under the operator as they drag the frame.
+    """
+    s = load_state()
+    page = s["pages"].get(page_id)
+    if not page:
+        raise HTTPException(404, "unknown page")
+    THUMBS.mkdir(parents=True, exist_ok=True)
+    dest = THUMBS / f"{page_id}.jpg"
+    if not dest.exists():
+        img = cv2.imread(page["source"])
+        if img is None:
+            raise HTTPException(410, f"source image gone: {page['source']}")
+        scale = THUMB_LONG_SIDE / max(img.shape[:2])
+        small = cv2.resize(img, None, fx=scale, fy=scale,
+                           interpolation=cv2.INTER_AREA)
+        cv2.imwrite(str(dest), small, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return Response(content=dest.read_bytes(), media_type="image/jpeg")
 
 
 @app.post("/api/accept/{page_id}")

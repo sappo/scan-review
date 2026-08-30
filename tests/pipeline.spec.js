@@ -1066,3 +1066,19 @@ test('a document with something to keep cannot be deleted', async ({ request }) 
   const del = await request.post(`/api/discard/${encodeURIComponent(doc.batch)}`);
   expect(del.status()).toBe(409);
 });
+
+test('thumbnails are small and cached', async ({ request }) => {
+  const p = (await allPages(request))[0];
+  const r = await request.get(`/api/thumb/${encodeURIComponent(p.id)}`);
+  expect(r.ok()).toBeTruthy();
+  expect(r.headers()['content-type']).toContain('image/jpeg');
+  const thumb = (await r.body()).length;
+  const full = (await (await request.get(
+    `/api/image/${encodeURIComponent(p.id)}`)).body()).length;
+  // The filmstrip cannot afford the full PNG: five of those is megabytes.
+  expect(thumb).toBeLessThan(full / 10);
+
+  const fs = require('fs'), path = require('path');
+  expect(fs.existsSync(path.join(__dirname, '..', 'work', 'thumbs',
+                                 p.id + '.jpg'))).toBe(true);
+});

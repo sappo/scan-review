@@ -50,6 +50,9 @@ function reset() {
     delete s.documents;    // removed: staged membership is a page status now
     fs.writeFileSync(STATE, JSON.stringify(s, null, 2));
   }
+  const thumbs = path.join(ROOT, 'work', 'thumbs');
+  if (fs.existsSync(thumbs))
+    for (const f of fs.readdirSync(thumbs)) fs.unlinkSync(path.join(thumbs, f));
   for (const dir of [TRUTH, CONSUME]) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
