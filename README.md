@@ -276,11 +276,16 @@ the two button clusters and expands onto its own row when tapped; a filename has
 nowhere near enough width to be legible inline on a 412px screen.
 
 The top bar holds only undo, the queue navigator, and the two decisions -
-reject and accept. Everything else lives in the bottom clusters, split into
-actions (page setup, gridlines, peek, reset, send) and modes (crop, straighten).
-That split is what keeps the top bar on one row: with peek still up there it
-fitted at exactly 412px and wrapped at 390, 375 and 360, pushing accept and
+reject and accept. That is what keeps it on one row: with peek still up there
+it fitted at exactly 412px and wrapped at 390, 375 and 360, pushing accept and
 reject onto a second line on most phones.
+
+Everything else lives in **one** permanently visible bottom bar - modes (crop,
+straighten), a separator, then actions (page setup, gridlines, peek, reset,
+send). Its buttons are 38px wide rather than 44: seven of them plus a separator
+do not fit a 360px screen otherwise, and two stacked bars took too much of the
+page. The full 44px height is kept, so only the horizontal target shrinks, and
+the two decisions that matter stay 44px in the top bar.
 
 **Controls float** over a full-bleed canvas as translucent pills rather than
 sitting in a docked panel, so the scan gets the whole screen. Buttons are

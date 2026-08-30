@@ -62,6 +62,15 @@
           box-shadow:0 4px 20px rgba(0,0,0,.45); pointer-events:auto;
           max-width:calc(100vw - 24px); flex-wrap:nowrap; }
   .pill.wide { border-radius:18px; flex-wrap:wrap; justify-content:center; }
+  /* The one permanently visible bar. Its buttons are narrower than the 44px
+     used elsewhere: seven of them plus a separator do not fit 360px otherwise,
+     and two stacked bars took too much of the page. Full 44px height is kept,
+     so only the horizontal target shrinks, and the two decisions that matter -
+     accept and reject - stay 44px wide in the top bar. */
+  #toolbar { gap:2px; padding:5px 4px; }
+  #toolbar button { width:38px; }
+  .sep { flex:none; width:1px; height:24px; margin:0 5px;
+         background:var(--line); border-radius:1px; }
 
   button.grow { border:0; font:inherit; }
   button:not(.grow) { width:44px; height:44px; padding:0; border:0; border-radius:999px;
@@ -173,7 +182,12 @@
     </div>
   </div>
 
-  <div class="pill">
+  <div class="pill" id="toolbar">
+    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
+            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
+    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
+            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
+    <span class="sep" data-testid="toolbar-sep" role="separator" aria-orientation="vertical"></span>
     <button data-testid="btn-pagesetup" aria-pressed="false" onclick="togglePageSetup()"
             title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="/icons.svg#pagesetup"/></svg></button>
     <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
@@ -185,12 +199,6 @@
     <button class="counted" data-testid="btn-finalize" onclick="finalize()"
             title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg><span
             class="badge" data-testid="staged-count"></span></button>
-  </div>
-  <div class="pill">
-    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
-            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
-    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
-            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
   </div>
 </div>
 

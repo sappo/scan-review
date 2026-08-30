@@ -782,5 +782,23 @@ test('the top bar stays on one row at common phone widths', async ({ page }, tes
     expect(rows, `top bar wrapped at ${width}px`).toBe(1);
     await expect(page.getByTestId('btn-accept')).toBeVisible();
     await expect(page.getByTestId('btn-reject')).toBeVisible();
+
+    // One permanently visible bottom bar, on one row, with every control on it.
+    const bottom = await page.evaluate(() => {
+      const tb = document.getElementById('toolbar');
+      return {
+        btnRows: new Set([...tb.querySelectorAll('button')]
+          .map(b => Math.round(b.getBoundingClientRect().top))).size,
+        buttons: tb.querySelectorAll('button').length,
+        visibleBars: [...document.getElementById('controls').children]
+          .filter(c => c.getBoundingClientRect().height > 0).length,
+        overflow: tb.scrollWidth > tb.clientWidth + 1,
+      };
+    });
+    expect(bottom.btnRows, `toolbar wrapped at ${width}px`).toBe(1);
+    expect(bottom.overflow, `toolbar overflowed at ${width}px`).toBe(false);
+    expect(bottom.buttons).toBe(7);
+    expect(bottom.visibleBars, `two bars visible at ${width}px`).toBe(1);
+    await expect(page.getByTestId('toolbar-sep')).toBeVisible();
   }
 });
