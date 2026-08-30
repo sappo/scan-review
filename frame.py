@@ -66,3 +66,32 @@ def frame_from_corners(corners):
     h = (np.linalg.norm(c[3] - c[0]) + np.linalg.norm(c[2] - c[1])) / 2.0
     return {"cx": float(cx), "cy": float(cy), "w": float(w), "h": float(h),
             "angle": quad_angle_deg(c)}
+
+
+def _edge_lengths(c):
+    return (max(np.linalg.norm(c[1] - c[0]), np.linalg.norm(c[2] - c[3])),
+            max(np.linalg.norm(c[3] - c[0]), np.linalg.norm(c[2] - c[1])))
+
+
+def seed_frame(corners, fmt):
+    """The ratio-locked frame a detector quad implies - what the operator sees first.
+
+    The detector's quad is close to ISO but not exact: the real A4 arrives at
+    1663x2328, a ratio of 0.7144 against A4's 0.707071. Fitting by least-squares
+    scale splits that error between both axes rather than letting the frame
+    systematically over- or under-cover the sheet.
+
+    Given the unit-ratio rectangle (rw, rh) and detected edge lengths (dw, dh),
+    minimising (s*rw - dw)^2 + (s*rh - dh)^2 gives
+        s = (rw*dw + rh*dh) / (rw^2 + rh^2)
+    """
+    c = np.asarray(corners, dtype=np.float64).reshape(4, 2)
+    cx, cy = c.mean(axis=0)
+    dw, dh = _edge_lengths(c)
+    orientation = LANDSCAPE if dw > dh else PORTRAIT
+    rw, rh = 1.0, ratio(fmt, orientation)
+    s = (rw * dw + rh * dh) / (rw * rw + rh * rh)
+    return {"cx": float(cx), "cy": float(cy),
+            "w": float(s * rw), "h": float(s * rh),
+            "angle": quad_angle_deg(c),
+            "format": fmt, "orientation": orientation}

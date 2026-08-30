@@ -47,3 +47,43 @@ def test_quad_angle_matches_the_detector_on_the_real_a6():
     # detect.py and app.quad_angle document opposite sign conventions but produce
     # the same number. This pins the number, not the prose.
     assert F.quad_angle_deg(A6_CORNERS) == pytest.approx(A6_ANGLE, abs=1e-6)
+
+
+# The real A4 detection from `letter-01.png`: full scan width, ratio 0.7144.
+A4_CORNERS = [[0.0, 0.0], [1663.0, 0.0], [1663.0, 2328.0], [0.0, 2328.0]]
+
+
+def test_seed_locks_the_ratio_exactly():
+    f = F.seed_frame(A4_CORNERS, "A4")
+    assert f["h"] / f["w"] == pytest.approx(F.ratio("A4", F.PORTRAIT), abs=1e-9)
+
+
+def test_seed_splits_the_error_between_both_axes():
+    # Detected 1663x2328 (ratio 0.7144) cannot be A4 (0.707071) exactly. The
+    # least-squares scale lands between: narrower AND taller, not one or other.
+    f = F.seed_frame(A4_CORNERS, "A4")
+    assert f["w"] == pytest.approx(1651.7, abs=0.5)
+    assert f["h"] == pytest.approx(2335.9, abs=0.5)
+    assert f["w"] < 1663.0 and f["h"] > 2328.0
+
+
+def test_seed_centres_on_the_detected_centroid():
+    f = F.seed_frame(A4_CORNERS, "A4")
+    assert f["cx"] == pytest.approx(831.5, abs=1e-6)
+    assert f["cy"] == pytest.approx(1164.0, abs=1e-6)
+
+
+def test_seed_infers_landscape_from_the_real_a6():
+    f = F.seed_frame(A6_CORNERS, "A6")
+    assert f["orientation"] == F.LANDSCAPE
+    assert f["cx"] == pytest.approx(896.0, abs=0.1)
+    assert f["cy"] == pytest.approx(386.7, abs=0.1)
+    assert f["w"] == pytest.approx(1166.3, abs=0.1)
+    assert f["h"] == pytest.approx(827.5, abs=0.1)
+    assert f["angle"] == pytest.approx(A6_ANGLE, abs=1e-6)
+    assert f["format"] == "A6"
+
+
+def test_seed_of_an_unknown_format_is_rejected():
+    with pytest.raises(KeyError):
+        F.seed_frame(A4_CORNERS, "free")
