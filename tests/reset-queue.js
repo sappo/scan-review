@@ -16,13 +16,27 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const STATE = path.join(ROOT, 'work', 'state.json');
 const TRUTH = path.join(ROOT, 'groundtruth');
 const CONSUME = path.join(ROOT, 'mock-paperless', 'consume');
 
+/** The suite supplies its own scans. It used to run against real documents in
+ *  spool/, which are not in the repository and were consumed as the tests ran,
+ *  so it only worked on one machine and only until the queue emptied. */
+function ensureFixtures() {
+  const spool = path.join(ROOT, 'spool');
+  const have = fs.existsSync(spool) &&
+    fs.readdirSync(spool).some(f => f.startsWith('fx-') && f.endsWith('.png'));
+  if (have) return;
+  execFileSync(path.join(ROOT, '.venv', 'bin', 'python'),
+               [path.join(ROOT, 'make_fixtures.py'), spool], { stdio: 'inherit' });
+}
+
 function reset() {
+  ensureFixtures();
   if (fs.existsSync(STATE)) {
     const s = JSON.parse(fs.readFileSync(STATE, 'utf8'));
     for (const [id, page] of Object.entries(s.pages)) {

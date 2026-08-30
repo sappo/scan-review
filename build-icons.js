@@ -16,6 +16,8 @@ const OUT = path.join(__dirname, 'icons.svg');
 // id in the sprite -> lucide icon name
 const ICONS = {
   undo: 'undo-2',
+  prev: 'chevron-left',
+  next: 'chevron-right',
   peek: 'expand',
   accept: 'check',
   reject: 'x',

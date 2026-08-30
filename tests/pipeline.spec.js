@@ -545,7 +545,7 @@ test('dragging moves the frame by the damped distance, not a compounding one',
 test('the title pill matches the height of the buttons beside it', async ({ page }) => {
   await ready(page);
   const h = await page.evaluate(() => {
-    const grow = document.querySelector('#top .grow').getBoundingClientRect();
+    const grow = document.getElementById('nav').getBoundingClientRect();
     const pill = document.querySelector('[data-testid=btn-accept]')
                    .closest('.pill').getBoundingClientRect();
     return { grow: grow.height, pill: pill.height };
@@ -579,12 +579,14 @@ test('the title collapses to a queue position on mobile and expands on tap',
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByTestId('page-title')).toBeHidden();
     await expect(page.getByTestId('queue-count')).toBeVisible();
-    const narrow = (await toggle.boundingBox()).width;
+    const nav = page.locator('#nav');
+    const narrow = (await nav.boundingBox()).width;
     const vw = await page.evaluate(() => innerWidth);
-    expect(narrow).toBeLessThan(vw / 3);
+    // Compact: the pill holds prev + badge + next, not the whole bar.
+    expect(narrow).toBeLessThan(vw / 2);
     // ...and it shares the row with the buttons rather than taking its own.
     const rowShared = await page.evaluate(() => {
-      const t = document.querySelector('[data-testid=title-toggle]').getBoundingClientRect();
+      const t = document.getElementById('nav').getBoundingClientRect();
       // Compare pill to pill: the button sits 5px inside its own pill.
       const b = document.querySelector('[data-testid=btn-accept]')
                   .closest('.pill').getBoundingClientRect();
@@ -595,21 +597,69 @@ test('the title collapses to a queue position on mobile and expands on tap',
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('page-title')).toBeVisible();
-    const wide = (await toggle.boundingBox()).width;
+    const wide = (await nav.boundingBox()).width;
     expect(wide).toBeGreaterThan(vw * 0.8);
 
     await toggle.click();
     await expect(page.getByTestId('page-title')).toBeHidden();
   });
 
-test('the queue position counts up as pages are accepted', async ({ page }) => {
+test('the badge tracks position in the queue, and the queue shrinks on accept',
+  async ({ page }) => {
+    await ready(page);
+    const first = await page.getByTestId('queue-count').textContent();
+    expect(first).toMatch(/^1\/(\d+)$/);
+    const total = Number(first.split('/')[1]);
+    expect(total).toBeGreaterThan(1);
+    await page.getByTestId('btn-accept').click();
+    await expect(page.getByTestId('status')).toContainText('accepted');
+    // Still on position 1 - the page that took the accepted one's place - and
+    // one fewer page to get through.
+    await expect(page.getByTestId('queue-count')).toHaveText(`1/${total - 1}`);
+  });
+
+test('next and previous walk the queue and the badge follows', async ({ page }) => {
   await ready(page);
-  const first = await page.getByTestId('queue-count').textContent();
-  expect(first).toMatch(/^1\/(\d+)$/);
-  const total = Number(first.split('/')[1]);
-  await page.getByTestId('btn-accept').click();
-  await expect(page.getByTestId('status')).toContainText('accepted');
+  const total = Number((await page.getByTestId('queue-count').textContent()).split('/')[1]);
+  expect(total).toBeGreaterThanOrEqual(3);
+  const firstId = await page.evaluate(() => window.state.page.id);
+
+  await page.getByTestId('btn-next').click();
   await expect(page.getByTestId('queue-count')).toHaveText(`2/${total}`);
+  const secondId = await page.evaluate(() => window.state.page.id);
+  expect(secondId).not.toBe(firstId);
+  await expect(page.getByTestId('page-title')).toHaveText(secondId);
+
+  await page.getByTestId('btn-prev').click();
+  await expect(page.getByTestId('queue-count')).toHaveText(`1/${total}`);
+  expect(await page.evaluate(() => window.state.page.id)).toBe(firstId);
+});
+
+test('navigation stops at both ends rather than wrapping', async ({ page }) => {
+  await ready(page);
+  const total = Number((await page.getByTestId('queue-count').textContent()).split('/')[1]);
+  await expect(page.getByTestId('btn-prev')).toBeDisabled();
+  await expect(page.getByTestId('btn-next')).toBeEnabled();
+  for (let i = 1; i < total; i++) await page.getByTestId('btn-next').click();
+  await expect(page.getByTestId('queue-count')).toHaveText(`${total}/${total}`);
+  await expect(page.getByTestId('btn-next')).toBeDisabled();
+  await expect(page.getByTestId('btn-prev')).toBeEnabled();
+});
+
+test('edits survive stepping away and back', async ({ page }) => {
+  await ready(page);
+  await page.evaluate(() => {
+    window.state.frame.cx += 120; window.state.frame.cy -= 60; window.render();
+  });
+  const edited = await frameOf(page);
+  await page.getByTestId('btn-next').click();
+  const other = await frameOf(page);
+  expect(other.cx).not.toBeCloseTo(edited.cx, 1);
+  await page.getByTestId('btn-prev').click();
+  const back = await frameOf(page);
+  // Navigating away must not silently discard work.
+  expect(back.cx).toBeCloseTo(edited.cx, 3);
+  expect(back.cy).toBeCloseTo(edited.cy, 3);
 });
 
 test('the floating controls never cover the frame corners', async ({ page }) => {

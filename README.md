@@ -96,14 +96,21 @@ candidates.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 80 e2e (40 mobile, 40 desktop)
+    npx playwright test                     # 86 e2e (43 mobile, 43 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
 the skewed A6, the frame/corners round-trip, and the error decomposition.
 
 The Playwright suite runs against the live service in two viewports, `Pixel 7`
-and 1280x1000. It asserts on outcomes - accepted pixel dimensions, painted
+and 1280x1000. It supplies its own scans: `make_fixtures.py` generates
+synthetic FULL-size scans with the three regions detect.py keys off, and the
+global setup regenerates them if `spool/` is empty. The suite used to run
+against real documents, which are not in the repository and were consumed as
+the tests ran - so it only worked on one machine, and only until the queue
+emptied. The fixtures cover a plain A4, an A4 whose print is 1.2 degrees off
+its sheet, an A4 fed at -2.6 degrees, and a blank A6 where the content angle
+cannot be measured at all. It asserts on outcomes - accepted pixel dimensions, painted
 pixels, files on disk, `qpdf --show-npages` - not on whether something rendered.
 
 Two properties would pass against a broken implementation, so both were
@@ -126,8 +133,8 @@ each other - the same constraint that forbids `uvicorn --workers N`.
     ui.js             frame geometry, gestures, canvas rendering
     evaluate.py       how far the detector is off, per axis
     fetch_scans.py    pull scans from the Pi, checksum-verified
-    originals/        untouched copies of the reference sheets
-    spool-archive/    other scans pulled from the Pi, kept out of the queue
+    make_fixtures.py  synthetic scans for the test suite
+    build-icons.js    vendored Lucide sprite -> icons.svg
 
 ## Post-implementation review (self-audit)
 
@@ -248,6 +255,12 @@ icon-only, from a vendored Lucide sprite (`build-icons.js` -> `icons.svg`); no
 CDN, so the UI works without internet and a page showing scanned documents makes
 no third-party requests. The A4/A5/A6 chips stay textual - there is no icon for
 "A4".
+
+**Navigation** - the badge in the top bar reads the position in the queue,
+`1/4`, with a chevron either side to step through it. Bounded rather than
+wrapping: on a phone a wrap looks identical to not having moved. Edits are kept
+per page, so stepping away and back does not discard them - navigation you
+cannot trust is worse than none.
 
 **Peek** flips to the warped result full-screen, rendered by the same endpoint
 Accept uses.

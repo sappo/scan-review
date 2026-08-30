@@ -27,13 +27,11 @@
      clusters sit at the edges instead of bunching left with dead space. */
   #top { top:0; padding-top:calc(10px + env(safe-area-inset-top));
          justify-content:space-between; }
-  /* Same box model as .pill so it lines up with the buttons either side:
-     a 44px control plus 5px padding top and bottom. */
-  #top .grow { flex:1; min-width:0; height:54px; display:flex; align-items:center;
-               gap:8px; padding:0 16px; border-radius:999px;
-               background:rgba(20,24,31,0.92); backdrop-filter:blur(10px);
-               box-shadow:0 4px 20px rgba(0,0,0,.45); pointer-events:auto;
-               font-size:15px; color:var(--text); }
+  /* Sits inside the nav pill, which supplies the background and the height. */
+  #top .grow { min-width:0; height:44px; display:flex; align-items:center;
+               gap:8px; padding:0 10px; border-radius:999px; background:transparent;
+               box-shadow:none; pointer-events:auto; font-size:15px;
+               color:var(--text); }
   #top .fname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
                 white-space:nowrap; text-align:left; }
   /* Never allowed to shrink: the count was being eaten by the filename's
@@ -44,13 +42,14 @@
   /* Collapsed it is just the queue position, small enough to sit between the
      two button clusters. Tapping expands it onto its own row for the filename,
      which has nowhere near enough width to be legible inline on a phone. */
-  #top .grow:not(.open) { flex:0 0 auto; justify-content:center; padding:0 18px; }
+  #top .grow:not(.open) { flex:0 0 auto; justify-content:center; padding:0 14px; }
   #top .grow:not(.open) .fname { display:none; }
   #top .grow:not(.open) .count { color:var(--text); font-size:15px; }
+  #top .grow.open { flex:1 1 auto; }
   /* Own row only where it is needed. Full width on a wide screen puts the pill
      directly over the frame's top-left corner, where it swallows the drag. */
   @media (max-width:560px) {
-    #top .grow.open { order:3; flex-basis:100%; flex-grow:0; }
+    #top #nav.wide { order:3; flex-basis:100%; }
   }
 
   /* Floating clusters, bottom-centred, clear of the safe area. */
@@ -116,14 +115,18 @@
   <div class="pill">
     <button data-testid="btn-undo" onclick="undo()" title="Undo" aria-label="Undo">
       <svg><use href="/icons.svg#undo"/></svg></button>
-    <button data-testid="btn-reset" onclick="resetFrame()" title="Reset to detected" aria-label="Reset">
-      <svg><use href="/icons.svg#reset"/></svg></button>
   </div>
-  <button class="grow" data-testid="title-toggle" onclick="toggleTitle()"
-          aria-expanded="false" title="Show page name">
-    <span class="fname" data-testid="page-title">…</span>
-    <span class="count" data-testid="queue-count"></span>
-  </button>
+  <div class="pill" id="nav">
+    <button data-testid="btn-prev" onclick="step(-1)" title="Previous page"
+            aria-label="Previous page"><svg><use href="/icons.svg#prev"/></svg></button>
+    <button class="grow" data-testid="title-toggle" onclick="toggleTitle()"
+            aria-expanded="false" title="Show page name">
+      <span class="fname" data-testid="page-title">…</span>
+      <span class="count" data-testid="queue-count"></span>
+    </button>
+    <button data-testid="btn-next" onclick="step(1)" title="Next page"
+            aria-label="Next page"><svg><use href="/icons.svg#next"/></svg></button>
+  </div>
   <div class="pill">
     <button data-testid="btn-peek" onclick="togglePeek()" title="Preview result" aria-label="Preview result">
       <svg><use href="/icons.svg#peek"/></svg></button>
@@ -173,6 +176,8 @@
             title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="/icons.svg#pagesetup"/></svg></button>
     <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
             title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
+    <button data-testid="btn-reset" onclick="resetFrame()"
+            title="Reset to detected" aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
     <button data-testid="btn-finalize" onclick="finalize()"
             title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg></button>
   </div>

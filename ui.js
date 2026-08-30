@@ -35,6 +35,10 @@ const dctx = dial.getContext('2d');
 
 const state = {
   page: null, img: null,
+  pending: [], index: 0,
+  // Edits are kept per page id, so stepping away and back does not silently
+  // throw away work. Navigation you cannot trust is worse than none.
+  edits: {},
   frame: null,                // {cx, cy, w, h, angle} in source px
   detectedAngle: 0, seedW: 0,
   format: 'A4', orientation: 'portrait', rotation: 0,
@@ -553,6 +557,7 @@ window.togglePageSetup = togglePageSetup;
 
 function applyTitleState() {
   const el = q('title-toggle');
+  document.getElementById('nav').classList.toggle('wide', state.titleOpen);
   el.classList.toggle('open', state.titleOpen);
   el.setAttribute('aria-expanded', String(state.titleOpen));
   el.title = state.titleOpen ? 'Hide page name' : 'Show page name';
@@ -633,7 +638,7 @@ async function accept() {
   if (!r.ok) { say('accept failed', 'var(--err)'); return; }
   const out = await r.json();
   say(`accepted ${out.width}×${out.height}`, 'var(--accent)');
-  state.history = [];
+  delete state.edits[state.page.id];
   await load();
 }
 
@@ -641,7 +646,7 @@ async function reject() {
   if (!state.page) return;
   await fetch('/api/reject/' + encodeURIComponent(state.page.id), { method: 'POST' });
   say('rejected');
-  state.history = [];
+  delete state.edits[state.page.id];
   await load();
 }
 
@@ -656,36 +661,66 @@ window.accept = accept; window.reject = reject; window.finalize = finalize;
 
 // -------------------------------------------------------------------- load
 
-async function load() {
-  state.peek = false;
-  const r = await fetch('/api/queue');
-  const data = await r.json();
-  // Progress through the session, not just what is left: `document` holds the
-  // pages already accepted, so this counts up 1/6, 2/6 ... as you work.
-  const done = (data.document || []).length;
-  const total = done + data.pending.length;
-  q('queue-count').textContent = total ? `${done + 1}/${total}` : '0/0';
+/** Remember what has been changed on this page before leaving it. */
+function captureEdit() {
+  if (!state.page || !state.frame) return;
+  state.edits[state.page.id] = {
+    frame: { ...state.frame }, format: state.format,
+    orientation: state.orientation, rotation: state.rotation,
+  };
+}
+
+function updateNav() {
+  const n = state.pending.length;
+  q('queue-count').textContent = n ? `${state.index + 1}/${n}` : '0/0';
+  q('btn-prev').disabled = state.index <= 0;
+  q('btn-next').disabled = state.index >= n - 1;
   applyTitleState();
-  if (!data.pending.length) {
+}
+
+/** Move through the queue. Bounded rather than wrapping: on a phone a wrap
+ *  looks identical to not having moved. */
+async function step(delta) {
+  const next = state.index + delta;
+  if (next < 0 || next >= state.pending.length) return;
+  captureEdit();
+  state.index = next;
+  await showPage();
+}
+window.step = step;
+
+async function showPage() {
+  state.peek = false;
+  const p = state.pending[state.index];
+  if (!p) {
     state.page = null; state.img = null; state.frame = null;
     q('page-title').textContent = 'queue empty';
-    render();
+    updateNav(); render();
     return;
   }
-  const p = data.pending[0];
   state.page = p;
   const s = p.seeded;
-  state.frame = s
-    ? { cx: s.cx, cy: s.cy, w: s.w, h: s.h, angle: s.angle }
-    : { cx: p.width / 2, cy: p.height / 2, w: p.width, h: p.height, angle: 0 };
-  state.detectedAngle = state.frame.angle;
-  state.seedW = state.frame.w;
-  state.format = (s && s.format) || 'A4';
-  state.orientation = (s && s.orientation) || 'portrait';
-  state.rotation = 0;
+  const kept = state.edits[p.id];
+  if (kept) {
+    state.frame = { ...kept.frame }; state.format = kept.format;
+    state.orientation = kept.orientation; state.rotation = kept.rotation;
+  } else {
+    state.frame = s
+      ? { cx: s.cx, cy: s.cy, w: s.w, h: s.h, angle: s.angle }
+      : { cx: p.width / 2, cy: p.height / 2, w: p.width, h: p.height, angle: 0 };
+    state.format = (s && s.format) || 'A4';
+    state.orientation = (s && s.orientation) || 'portrait';
+    state.rotation = 0;
+  }
+  // The dial always reads 0 at what the detector proposed, not at what a
+  // previous edit left behind.
+  state.detectedAngle = s ? s.angle : 0;
+  state.seedW = s ? s.w : state.frame.w;
+  state.history = [];
   state.view = { zoom: 1, panX: 0, panY: 0 };
   q('page-title').textContent = p.id;
-  q('angle-readout').textContent = '+0.00°';
+  q('angle-readout').textContent =
+      `${dialValue() >= 0 ? '+' : ''}${dialValue().toFixed(2)}°`;
   await new Promise(res => {
     const im = new Image();
     im.onload = () => { state.img = im; res(); };
@@ -693,7 +728,19 @@ async function load() {
     im.src = '/api/image/' + encodeURIComponent(p.id) + '?t=' + Date.now();
   });
   syncChips();
+  updateNav();
   resize();
+}
+window.showPage = showPage;
+
+async function load() {
+  const r = await fetch('/api/queue');
+  const data = await r.json();
+  state.pending = data.pending;
+  // Clamp rather than reset: after accepting page 3 of 6 you want to be on the
+  // page that took its place, not back at the start.
+  state.index = Math.max(0, Math.min(state.index, state.pending.length - 1));
+  await showPage();
 }
 window.load = load;
 load();
