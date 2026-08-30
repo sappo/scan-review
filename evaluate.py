@@ -58,6 +58,13 @@ def summarise(records):
         "centre_mm": _stats([e["centre_dist_mm"] for e in errs]),
         "scale_pct": _stats([abs(e["scale"] - 1.0) * 100 for e in errs]),
         "angle_deg": _stats([abs(e["angle_deg"]) for e in errs]),
+        # How often the content angle could be measured at all, and by how much
+        # it moved the frame off the sheet angle when it could.
+        "text_measured": sum(1 for r in records
+                             if (r.get("text_skew") or {}).get("confident")),
+        "text_residual": _stats([abs(r["text_skew"]["residual_deg"])
+                                 for r in records
+                                 if (r.get("text_skew") or {}).get("confident")]),
     }
 
 
@@ -91,6 +98,10 @@ def main(argv=None):
     print(f"centre error : {_fmt(s['centre_mm'], 'mm')}")
     print(f"scale error  : {_fmt(s['scale_pct'], '%')}")
     print(f"angle error  : {_fmt(s['angle_deg'], 'deg')}")
+    print()
+    print(f"text deskew  : measured on {s['text_measured']}/{s['n']} pages "
+          f"(the rest kept the sheet angle)")
+    print(f"  correction : {_fmt(s['text_residual'], 'deg')}")
 
     worst = sorted((r for r in records if r.get("error")),
                    key=lambda r: r["error"]["centre_dist_mm"], reverse=True)

@@ -46,6 +46,43 @@ Brightness alone cannot tell paper from padding (both bright); variance alone
 cannot tell paper from backing (both optically scanned). `detect.py` combines
 them, then takes the largest contour's minimum-area rectangle as the quad.
 
+## Two angles, and which one wins
+
+`detect.py` measures the **sheet** - the angle of the paper, from `minAreaRect`
+over the paper mask. `deskew.py` measures the **content** - the angle of the
+printed text, from the baselines of whatever is on the page. These are different
+quantities and they do disagree: `letter-01`'s text sits about **1 degree off
+its own sheet edges**, which was confirmed independently with `cv2.HoughLinesP`
+(+0.90 to +1.05) before it was believed.
+
+The content angle wins, because a level page is what the reader wants.
+
+The text angle is measured as a RESIDUAL on the already-cropped page and added
+to the sheet angle. Run on a FULL scan it would not work at all: the grey ADF
+backing binarises as one enormous dark region whose boundary is a near-perfect
+horizontal line, and that single edge outvotes every line of text. For the same
+reason the measurement ignores a 1% margin on all four sides - the sheet border
+sitting on the crop boundary forms a broad ridge across many angles in the
+accumulator and scatters the result.
+
+When the content angle cannot be measured confidently - a blank page, a
+photograph, a sparse handwritten note - the sheet angle stands. The real A6 in
+`spool/` is exactly that case: 11 agreeing lines out of 28 candidates, so it
+keeps its -7.679 degree sheet angle.
+
+**Only the angle comes from the text.** Centre and size stay with the sheet, so
+a page printed askew rotates the crop but cannot walk it off the paper; if it
+reaches past the scan the existing overhang warning shows it.
+
+The algorithm is NAPS2's (`NAPS2.Sdk/Images/Deskewer.cs`), reimplemented from a
+description of how it works rather than translated - NAPS2 is GPL-2.0-or-later
+and this project is not, so none of its code is carried over. Bottom edges only
+(a dark pixel directly above a light one), a Hough accumulator over -20 to +20
+degrees in 201 steps, keep the top 100 lines, drop any scoring under half the
+10th best, cluster the survivors within 2.01 degrees, and report the cluster
+mean - or no confidence at all when the winning cluster holds under half the
+candidates.
+
 ## Known limits
 
 - A4 has almost no horizontal margin: the scanner's usable width is ~211mm versus
@@ -58,8 +95,8 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 
 ## Tests
 
-    ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
-    npx playwright test                     # 78 e2e (39 mobile, 39 desktop)
+    ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
+    npx playwright test                     # 80 e2e (40 mobile, 40 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -81,6 +118,7 @@ each other - the same constraint that forbids `uvicorn --workers N`.
 ## Layout
 
     detect.py         find the sheet (corners, skew, coverage)
+    deskew.py         measure the angle of the printed CONTENT
     frame.py          the ratio-locked crop: seed fit, frame <-> corners, error
     warp.py           deskew/crop at a true ISO size
     app.py            queue, accept/reject, PDF assembly, mock delivery

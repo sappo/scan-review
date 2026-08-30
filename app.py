@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from detect import detect
 import frame as frame_mod
+from deskew import text_skew
 from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
 
 ROOT = Path(__file__).parent
@@ -127,8 +128,7 @@ def ingest_spool(state):
         # If the browser computed it, a stale client could report a starting
         # frame it never displayed and the ground-truth dataset would overstate
         # how often the detector was right.
-        seeded = (frame_mod.seed_frame(corners, suggested)
-                  if suggested in PAPER_MM else None)
+        seeded, text = seed_with_text(img, corners, suggested)
         hint = None
         sidecar = path.with_suffix(path.suffix + ".json")
         if sidecar.exists():
@@ -155,10 +155,44 @@ def ingest_spool(state):
             # Frozen at ingest so later edits cannot overwrite what was proposed.
             "detected": {"corners": corners, "angle": angle, "format": suggested},
             "seeded": seeded,
+            "text_skew": text,
         }
         state["ingested"].append(key)
         added.append(key)
     return added
+
+
+def seed_with_text(img, corners, fmt):
+    """Seed a frame from the sheet, then level it to the printed content.
+
+    detect.py measures the SHEET; deskew.py measures the CONTENT. They are
+    different quantities and can disagree - letter-01's text sits about 1 degree
+    off its own sheet edges, confirmed independently with cv2.HoughLinesP. The
+    content angle wins, because a level page is what the reader wants.
+
+    The text angle is a RESIDUAL on the already-cropped page: run on a FULL scan
+    the grey ADF backing is one huge dark region whose boundary outvotes every
+    line of text. When the measurement is not confident - a blank page, a
+    photograph - the sheet angle stands.
+
+    Only the ANGLE comes from the text. Centre and size stay with the sheet, so
+    a page printed askew rotates the crop but cannot walk it off the paper; if
+    it does reach past the scan the existing overhang warning shows it.
+    """
+    if fmt not in PAPER_MM:
+        return None, None
+    seeded = frame_mod.seed_frame(corners, fmt)
+    try:
+        crop = warp(img, frame_mod.corners_of(seeded), target=fmt).image
+        skew = text_skew(crop)
+    except Exception:
+        return seeded, None
+    text = {"residual_deg": skew.angle_deg, "confident": skew.confident,
+            "candidates": skew.candidates, "cluster": skew.cluster,
+            "sheet_angle": seeded["angle"]}
+    if skew.confident:
+        seeded = dict(seeded, angle=seeded["angle"] + skew.angle_deg)
+    return seeded, text
 
 
 def backfill_seeds(state):
@@ -169,13 +203,16 @@ def backfill_seeds(state):
     """
     changed = False
     for page in state["pages"].values():
-        if page.get("seeded") is not None:
+        if page.get("seeded") is not None and "text_skew" in page:
             continue
         det = page.get("detected") or {}
         fmt = det.get("format")
         if not det.get("corners") or fmt not in PAPER_MM:
             continue
-        page["seeded"] = frame_mod.seed_frame(det["corners"], fmt)
+        img = cv2.imread(page["source"])
+        if img is None:
+            continue
+        page["seeded"], page["text_skew"] = seed_with_text(img, det["corners"], fmt)
         changed = True
     return changed
 
@@ -276,6 +313,7 @@ def accept(page_id: str, body: AcceptBody):
                          "angle": detected.get("angle"),
                          "format": detected.get("format")},
             "seeded": seeded,
+            "text_skew": page.get("text_skew"),
             "accepted": dict(accepted_frame, corners=body.corners),
             "error": (frame_mod.frame_error(seeded, accepted_frame)
                       if seeded else None),

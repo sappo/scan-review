@@ -630,3 +630,25 @@ test('the floating controls never cover the frame corners', async ({ page }) => 
   });
   expect(clash).toEqual([]);
 });
+
+test('ingest measures the content angle and levels the frame to it',
+  async ({ request }) => {
+    const { pending } = await (await request.get('/api/queue')).json();
+    const withText = pending.filter(p => p.text_skew);
+    expect(withText.length).toBeGreaterThan(0);
+    for (const p of withText) {
+      const t = p.text_skew;
+      expect(typeof t.residual_deg).toBe('number');
+      expect(typeof t.confident).toBe('boolean');
+      if (t.confident) {
+        // The content angle wins: the seeded frame is the sheet angle plus the
+        // measured residual.
+        expect(p.seeded.angle).toBeCloseTo(t.sheet_angle + t.residual_deg, 6);
+      } else {
+        // Not measurable (blank, sparse, a photo) - the sheet angle stands.
+        expect(p.seeded.angle).toBeCloseTo(t.sheet_angle, 6);
+      }
+    }
+    // At least one real scan should actually be measurable.
+    expect(withText.some(p => p.text_skew.confident)).toBe(true);
+  });

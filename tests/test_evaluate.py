@@ -14,6 +14,17 @@ def _rec(page, unchanged, dist_mm, scale, angle, fmt_ok=True, hint=True):
                       "orientation_agreed": True, "hint_agrees": hint}}
 
 
+def test_text_deskew_stats_count_only_confident_measurements():
+    recs = [_rec("a", True, 0.0, 1.0, 0.0), _rec("b", True, 0.0, 1.0, 0.0),
+            _rec("c", True, 0.0, 1.0, 0.0)]
+    recs[0]["text_skew"] = {"confident": True, "residual_deg": 1.0}
+    recs[1]["text_skew"] = {"confident": False, "residual_deg": 0.0}
+    # recs[2] predates the measurement entirely.
+    s = E.summarise(recs)
+    assert s["text_measured"] == 1
+    assert s["text_residual"]["max"] == pytest.approx(1.0)
+
+
 def test_summarise_counts_agreement():
     s = E.summarise([_rec("a", True, 0.0, 1.0, 0.0),
                      _rec("b", False, 2.0, 1.01, 0.5)])
