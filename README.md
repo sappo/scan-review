@@ -59,7 +59,7 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
-    npx playwright test                     # 68 e2e (34 mobile, 34 desktop)
+    npx playwright test                     # 72 e2e (36 mobile, 36 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and

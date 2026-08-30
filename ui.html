@@ -22,12 +22,29 @@
   #grid { pointer-events:none; }
 
   .bar { position:absolute; left:0; right:0; display:flex; align-items:center;
-         gap:10px; padding:10px 12px; pointer-events:none; }
-  #top { top:0; padding-top:calc(10px + env(safe-area-inset-top)); }
-  #top .grow { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
-               white-space:nowrap; color:var(--text); font-size:13px;
-               background:var(--float); border-radius:999px; padding:5px 12px;
-               backdrop-filter:blur(8px); pointer-events:auto; }
+         gap:10px; padding:10px 12px; pointer-events:none; flex-wrap:wrap; }
+  /* space-between so that once the title wraps to its own row the two button
+     clusters sit at the edges instead of bunching left with dead space. */
+  #top { top:0; padding-top:calc(10px + env(safe-area-inset-top));
+         justify-content:space-between; }
+  /* Same box model as .pill so it lines up with the buttons either side:
+     a 44px control plus 5px padding top and bottom. */
+  #top .grow { flex:1; min-width:0; height:54px; display:flex; align-items:center;
+               gap:8px; padding:0 16px; border-radius:999px;
+               background:rgba(20,24,31,0.92); backdrop-filter:blur(10px);
+               box-shadow:0 4px 20px rgba(0,0,0,.45); pointer-events:auto;
+               font-size:15px; color:var(--text); }
+  #top .fname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                white-space:nowrap; }
+  /* Never allowed to shrink: the count was being eaten by the filename's
+     ellipsis, so the one value that changes was the one you could not read. */
+  #top .count { flex:none; color:var(--dim); font-size:13px; }
+
+  /* Narrow screens cannot fit two button clusters AND a legible title on one
+     line, so the title takes its own row rather than being squeezed to nothing. */
+  @media (max-width:560px) {
+    #top .grow { order:3; flex-basis:100%; flex-grow:0; justify-content:center; }
+  }
 
   /* Floating clusters, bottom-centred, clear of the safe area. */
   #controls { position:absolute; left:0; right:0;
@@ -94,8 +111,10 @@
     <button data-testid="btn-reset" onclick="resetFrame()" title="Reset to detected" aria-label="Reset">
       <svg><use href="/icons.svg#reset"/></svg></button>
   </div>
-  <span class="grow"><span data-testid="page-title">…</span>
-    · <span data-testid="queue-count"></span></span>
+  <span class="grow">
+    <span class="fname" data-testid="page-title">…</span>
+    <span class="count" data-testid="queue-count"></span>
+  </span>
   <div class="pill">
     <button data-testid="btn-peek" onclick="togglePeek()" title="Preview result" aria-label="Preview result">
       <svg><use href="/icons.svg#peek"/></svg></button>

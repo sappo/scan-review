@@ -540,3 +540,30 @@ test('dragging moves the frame by the damped distance, not a compounding one',
     const expected = ((100 - 10) * dpr / s) * gain;
     expect(after.cx - before.cx).toBeCloseTo(expected, 0);
   });
+
+test('the title pill matches the height of the buttons beside it', async ({ page }) => {
+  await ready(page);
+  const h = await page.evaluate(() => {
+    const grow = document.querySelector('#top .grow').getBoundingClientRect();
+    const pill = document.querySelector('[data-testid=btn-accept]')
+                   .closest('.pill').getBoundingClientRect();
+    return { grow: grow.height, pill: pill.height };
+  });
+  expect(h.grow).toBeCloseTo(h.pill, 0);
+});
+
+test('the queue count is legible and never truncated away', async ({ page }) => {
+  await ready(page);
+  const info = await page.evaluate(() => {
+    const c = document.querySelector('[data-testid=queue-count]');
+    const r = c.getBoundingClientRect();
+    const cs = getComputedStyle(c);
+    return { text: c.textContent.trim(), w: r.width,
+             scroll: c.scrollWidth, client: c.clientWidth,
+             size: parseFloat(cs.fontSize) };
+  });
+  expect(info.text).toMatch(/\d+ pending/);
+  expect(info.w).toBeGreaterThan(20);                        // laid out, not collapsed
+  expect(info.scroll).toBeLessThanOrEqual(info.client + 1);  // not clipped
+  expect(info.size).toBeGreaterThanOrEqual(13);
+});
