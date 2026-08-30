@@ -1,103 +1,110 @@
-#!/usr/bin/env python3
-"""Report how well the automatic detector matches what humans actually accepted.
+#!/usr/bin/env python
+"""Where the crop detector actually stands, measured against accepted reviews.
 
-Every accept writes a ground-truth record pairing the DETECTED quad with the
-ACCEPTED one. Agreement matters as much as correction, so untouched accepts are
-recorded too - they are the evidence that the detector was already right.
+Each accept writes a record pairing the frame the detector PROPOSED (`seeded`)
+with the frame the operator ACCEPTED. A ratio-locked frame has five degrees of
+freedom and each maps to a different part of the detector, so the error is
+reported per axis rather than as one blended number:
 
-usage: evaluate.py [--dir groundtruth] [--verbose]
+    centre       the paper mask's centroid - backing/padding thresholds
+    scale        mask erosion or dilation - the morphology kernel sizes
+    angle        minAreaRect skew
+    format       classify() and its tolerance
+
+Accepts the operator did NOT change are counted too. A corpus of only
+corrections would be biased.
 """
 import argparse
 import json
 import statistics
+import sys
 from pathlib import Path
 
-UNTOUCHED_PX = 2.0      # below this the human effectively accepted the proposal
+SCHEMA = 2
+TRUTH = Path(__file__).resolve().parent / "groundtruth"
 
 
-def angle_error(rec):
-    d = rec.get("detected", {}).get("angle")
-    a = rec.get("accepted", {}).get("angle")
-    if d is None or a is None:
-        return None
-    # Both describe the top edge; compare as a signed difference wrapped to +/-90.
-    err = (a - d + 90) % 180 - 90
-    return err
+def load_records(dirpath=TRUTH):
+    out = []
+    for p in sorted(Path(dirpath).glob("*.json")):
+        rec = json.loads(p.read_text())
+        if rec.get("schema") != SCHEMA:
+            raise ValueError(
+                f"{p.name}: schema {rec.get('schema')!r}, expected {SCHEMA}. "
+                "Records from before the ratio-locked frame are not comparable; "
+                "delete them rather than reading them as if they matched.")
+        out.append(rec)
+    return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default=str(Path(__file__).parent / "groundtruth"))
-    ap.add_argument("--verbose", action="store_true")
-    args = ap.parse_args()
+def _stats(values):
+    if not values:
+        return {"mean": None, "median": None, "max": None}
+    return {"mean": statistics.fmean(values),
+            "median": statistics.median(values),
+            "max": max(values)}
 
-    files = sorted(Path(args.dir).glob("*.json"))
-    if not files:
-        print(f"No ground-truth records in {args.dir} yet.")
-        print("Scan documents, review them, and accept each page; a record is")
-        print("written on every accept.")
+
+def summarise(records):
+    errs = [r["error"] for r in records if r.get("error")]
+    return {
+        "n": len(records),
+        "measured": len(errs),
+        "unchanged": sum(1 for e in errs if e["unchanged"]),
+        "format_agreed": sum(1 for e in errs if e["format_agreed"]),
+        "orientation_agreed": sum(1 for e in errs if e["orientation_agreed"]),
+        "hint_given": sum(1 for e in errs if e.get("hint_agrees") is not None),
+        "hint_agreed": sum(1 for e in errs if e.get("hint_agrees") is True),
+        "centre_mm": _stats([e["centre_dist_mm"] for e in errs]),
+        "scale_pct": _stats([abs(e["scale"] - 1.0) * 100 for e in errs]),
+        "angle_deg": _stats([abs(e["angle_deg"]) for e in errs]),
+    }
+
+
+def _fmt(s, unit, places=2):
+    if s["mean"] is None:
+        return "n/a"
+    return (f"mean {s['mean']:.{places}f}{unit}  "
+            f"median {s['median']:.{places}f}{unit}  "
+            f"max {s['max']:.{places}f}{unit}")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--verbose", action="store_true", help="per-record table")
+    ap.add_argument("--dir", default=str(TRUTH))
+    args = ap.parse_args(argv)
+
+    records = load_records(args.dir)
+    s = summarise(records)
+    if not s["n"]:
+        print("no ground-truth records yet - review some scans first")
         return 0
 
-    recs = []
-    for f in files:
-        try:
-            recs.append(json.loads(f.read_text()))
-        except json.JSONDecodeError:
-            print(f"  skipping unreadable record: {f.name}")
+    print(f"ground-truth records: {s['n']}")
+    print(f"  accepted unchanged : {s['unchanged']}   (detector was right)")
+    print(f"  corrected by hand  : {s['measured'] - s['unchanged']}")
+    print(f"  format agreement   : {s['format_agreed']}/{s['measured']}")
+    print(f"  orientation agree  : {s['orientation_agreed']}/{s['measured']}")
+    print(f"  matches panel hint : {s['hint_agreed']}/{s['hint_given']}")
+    print()
+    print(f"centre error : {_fmt(s['centre_mm'], 'mm')}")
+    print(f"scale error  : {_fmt(s['scale_pct'], '%')}")
+    print(f"angle error  : {_fmt(s['angle_deg'], 'deg')}")
 
-    shifts = [r["corner_shift_px"] for r in recs if r.get("corner_shift_px") is not None]
-    errs = [(r, angle_error(r)) for r in recs]
-    errs = [(r, e) for r, e in errs if e is not None]
-    untouched = [r for r in recs
-                 if (r.get("corner_shift_px") or 0) <= UNTOUCHED_PX]
-    corrected = [r for r in recs
-                 if (r.get("corner_shift_px") or 0) > UNTOUCHED_PX]
-
-    print(f"ground-truth records: {len(recs)}")
-    print(f"  accepted unchanged : {len(untouched)}   (detector was right)")
-    print(f"  corrected by hand  : {len(corrected)}")
-
-    fmt_known = [r for r in recs if r.get("detected", {}).get("format")]
-    if fmt_known:
-        agreed = sum(1 for r in fmt_known if r.get("format_agreed"))
-        print(f"  format agreement   : {agreed}/{len(fmt_known)} "
-              f"({100*agreed/len(fmt_known):.0f}%)")
-
-    hinted = [r for r in recs if r.get("hint")]
-    if hinted:
-        ok = sum(1 for r in hinted if r["hint"] == r.get("detected", {}).get("format"))
-        print(f"  matches panel hint : {ok}/{len(hinted)} "
-              f"({100*ok/len(hinted):.0f}%)")
-
-    if errs:
-        vals = [abs(e) for _, e in errs]
-        print(f"\nskew error (accepted minus detected), degrees:")
-        print(f"  mean |err| {statistics.mean(vals):.3f}   median |err| "
-              f"{statistics.median(vals):.3f}   max |err| {max(vals):.3f}")
-        if len(vals) > 1:
-            print(f"  stdev {statistics.pstdev(vals):.3f}")
-    if shifts:
-        print(f"corner displacement, px: mean {statistics.mean(shifts):.1f}  "
-              f"median {statistics.median(shifts):.1f}  max {max(shifts):.1f}")
-
-    worst = sorted(errs, key=lambda t: -abs(t[1]))[:10]
-    if worst:
-        print(f"\nworst cases by skew error:")
-        print(f"  {'page':26s} {'hint':5s} {'det':5s} {'acc':5s} "
-              f"{'skew_err':>9s} {'shift_px':>9s}")
-        for r, e in worst:
-            print(f"  {r['id'][:26]:26s} {str(r.get('hint'))[:5]:5s} "
-                  f"{str(r.get('detected',{}).get('format'))[:5]:5s} "
-                  f"{str(r.get('accepted',{}).get('format'))[:5]:5s} "
-                  f"{e:+9.3f} {(r.get('corner_shift_px') or 0):9.1f}")
-
-    if args.verbose:
-        print("\nall records:")
-        for r in recs:
-            print(f"  {r['id']}: detected {r.get('detected',{}).get('angle')} -> "
-                  f"accepted {r.get('accepted',{}).get('angle')}")
+    worst = sorted((r for r in records if r.get("error")),
+                   key=lambda r: r["error"]["centre_dist_mm"], reverse=True)
+    print()
+    print("worst cases by centre error:")
+    print(f"  {'page':28} {'hint':5} {'fmt':5} {'centre':>9} {'scale':>8} {'angle':>8}")
+    for r in (worst if args.verbose else worst[:8]):
+        e = r["error"]
+        print(f"  {r['page'][:28]:28} {str(r.get('hint')):5} "
+              f"{str(r['accepted'].get('format')):5} "
+              f"{e['centre_dist_mm']:7.2f}mm {(e['scale']-1)*100:6.2f}% "
+              f"{e['angle_deg']:6.2f}d")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
