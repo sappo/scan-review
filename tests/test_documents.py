@@ -40,17 +40,31 @@ def test_ready_when_nothing_is_pending():
 
 def test_a_sent_document_leaves_the_queue():
     docs = D.build(state(page("b-01.png", "b", 1, "sent"),
-                         page("b-02.png", "b", 2, "rejected")))
+                         page("b-02.png", "b", 2, "sent")))
     assert docs == []
 
 
-def test_a_wholly_rejected_document_leaves_the_queue():
-    # Nothing left to send, so there is nothing to review either.
+def test_a_discarded_document_leaves_the_queue():
+    docs = D.build(state(page("b-01.png", "b", 1, "discarded")))
+    assert docs == []
+
+
+def test_a_wholly_rejected_document_stays_and_is_deletable():
+    # It must NOT vanish: rejecting the only page of a one-page document would
+    # then be silently irreversible, and reject is meant to be undoable.
     docs = D.build(state(page("b-01.png", "b", 1, "rejected")))
-    assert docs == []
+    assert [d["batch"] for d in docs] == ["b"]
+    assert docs[0]["ready"] is True
+    assert docs[0]["deletable"] is True
 
 
-def test_a_document_with_one_live_page_stays():
+def test_a_document_with_something_to_keep_is_not_deletable():
+    docs = D.build(state(page("b-01.png", "b", 1, "accepted"),
+                         page("b-02.png", "b", 2, "rejected")))
+    assert docs[0]["deletable"] is False
+
+
+def test_a_document_with_one_open_page_stays():
     docs = D.build(state(page("b-01.png", "b", 1, "sent"),
                          page("b-02.png", "b", 2, "pending")))
     assert [d["batch"] for d in docs] == ["b"]

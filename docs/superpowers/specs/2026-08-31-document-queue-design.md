@@ -80,9 +80,15 @@ GET /api/queue
 - **`ready`** is `counts.pending == 0`. It is what lights Send.
 - `counts` has no `sent` entry. A document with sent pages has left the queue by
   definition (§5), so the count would always be zero.
-- A document appears only while it has at least one page that is `pending` or
-  `accepted`. So a sent document leaves the queue, and so does one whose pages
-  were all rejected — there is nothing left to send in either case.
+- A document stays while any page is not **closed**, where closed means `sent`
+  or `discarded`. Rejected counts as still open on purpose.
+
+  > **Amended during implementation.** This section originally said a wholly
+  > rejected document leaves the queue, "there is nothing left to send". That
+  > contradicts §4: reject is reversible until Send, but a one-page document
+  > whose page was rejected would vanish, taking the only route back to that
+  > page with it — and one-page documents are the common case. A wholly declined
+  > document now stays, with `deletable` true, and Send becomes Delete (§5a).
 
 `pending` disappears from the payload. Every existing e2e test reads it; see §8.
 
@@ -125,6 +131,21 @@ Accept and reject are unchanged in effect. What changes is what happens next:
 
 On success the accepted pages become `sent`. Rejected pages stay rejected. The
 document then has no `pending` or `accepted` pages and leaves the queue.
+
+## 5a. Deleting a document
+
+When every page is declined there is no PDF to make, so Send becomes **Delete**.
+`POST /api/discard/{batch}`:
+
+- 404 if the batch is unknown.
+- 409 while any page is still `pending` or `accepted` — there is something to
+  decide or something to keep, so Delete is not the right action.
+- Otherwise every page becomes `discarded` and its scan is **moved to
+  `spool-archive/`**, not erased. That directory already exists for scans kept
+  out of the queue, and a mis-tap should not destroy a document.
+
+`deletable` on a document is `ready && counts.accepted == 0`. It is what swaps
+the button.
 
 ## 6. Thumbnails
 

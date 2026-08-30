@@ -11,9 +11,11 @@ label rules can be tested without a browser or a running server.
 import re
 from datetime import datetime
 
-# A document is worth showing while it still has a page that could end up in a
-# PDF. Once every page is sent or rejected there is nothing left to decide.
-ACTIVE = ("pending", "accepted")
+# A document stays in the queue until it is closed - sent, or deleted. Rejected
+# counts as still open on purpose: a reject has to stay reversible, and if a
+# wholly rejected document vanished then rejecting the only page of a one-page
+# document would be silently final.
+CLOSED = ("sent", "discarded")
 
 # What scanui.py produces: <size>-<YYYYmmdd>-<HHMMSS>.
 BATCH_NAME = re.compile(r"^(?P<size>[A-Za-z0-9]+)-(?P<d>\d{8})-(?P<t>\d{6})$")
@@ -45,7 +47,7 @@ def build(state):
 
     docs = []
     for batch, members in groups.items():
-        if not any(p.get("status") in ACTIVE for p in members):
+        if all(p.get("status") in CLOSED for p in members):
             continue
         members.sort(key=lambda p: (p.get("page_no") or 0, p["id"]))
         counts = {"total": len(members)}
@@ -55,6 +57,9 @@ def build(state):
             "batch": batch,
             "label": label_for(batch),
             "ready": counts["pending"] == 0,
+            # Every page declined: there is no PDF to make, so the only way to
+            # close this document is to delete it.
+            "deletable": counts["pending"] == 0 and counts["accepted"] == 0,
             "counts": counts,
             "pages": members,
             # A document arrives when its earliest page does.

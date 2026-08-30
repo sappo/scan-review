@@ -31,6 +31,7 @@ from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
 ROOT = Path(__file__).parent
 SPOOL = ROOT / "spool"
 WORK = ROOT / "work"
+ARCHIVE = ROOT / "spool-archive"
 OUT = ROOT / "out"
 CONSUME = ROOT / "mock-paperless" / "consume"
 TRUTH = ROOT / "groundtruth"
@@ -460,6 +461,43 @@ def reject(page_id: str):
         page["status"] = "rejected"
         save_state(s)
         return {"ok": True}
+
+
+@app.post("/api/discard/{batch}")
+def discard(batch: str):
+    """Close a document that has nothing worth keeping.
+
+    When every page is declined there is no PDF to make, so Send becomes
+    Delete. Without this a wholly rejected document would either sit in the
+    queue for ever or - the earlier behaviour - vanish the instant its last
+    page was rejected, which made that reject silently irreversible on a
+    one-page document.
+
+    The scans are moved to spool-archive/ rather than erased: that directory
+    exists for scans kept out of the queue, and a mis-tap should not destroy a
+    document.
+    """
+    with _lock:
+        s = load_state()
+        members = [p for p in s["pages"].values() if p.get("batch") == batch]
+        if not members:
+            raise HTTPException(404, f"no such batch {batch!r}")
+        if any(p["status"] in ("pending", "accepted") for p in members):
+            raise HTTPException(
+                409, f"batch {batch!r} still has pages to keep or decide")
+        ARCHIVE.mkdir(parents=True, exist_ok=True)
+        moved = []
+        for p in members:
+            src = Path(p["source"])
+            if src.exists():
+                shutil.move(str(src), str(ARCHIVE / src.name))
+                moved.append(src.name)
+            side = src.with_suffix(src.suffix + ".json")
+            if side.exists():
+                shutil.move(str(side), str(ARCHIVE / side.name))
+            p["status"] = "discarded"
+        save_state(s)
+        return {"ok": True, "batch": batch, "archived": moved}
 
 
 @app.post("/api/reopen/{page_id}")

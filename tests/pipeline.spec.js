@@ -1021,3 +1021,48 @@ test('a sent page cannot be reopened, and finalize needs a decided document',
     const r = await request.post(`/api/reopen/${encodeURIComponent(doc.pages[0].id)}`);
     expect(r.status()).toBe(409);
   });
+
+test('a wholly declined document stays until deleted, then goes', async ({ request }) => {
+  const { documents } = await (await request.get('/api/queue')).json();
+  const doc = documents.find(d => d.counts.total === 1);
+  expect(doc, 'need a single-page document').toBeTruthy();
+
+  await request.post(`/api/reject/${encodeURIComponent(doc.pages[0].id)}`);
+  let q = await (await request.get('/api/queue')).json();
+  let still = q.documents.find(d => d.batch === doc.batch);
+  // It must NOT vanish - otherwise the reject could never be undone.
+  expect(still).toBeTruthy();
+  expect(still.deletable).toBe(true);
+  expect(still.ready).toBe(true);
+
+  // Nothing to send, so finalize refuses.
+  const fin = await request.post(`/api/finalize/${encodeURIComponent(doc.batch)}`);
+  expect(fin.ok()).toBeFalsy();
+
+  const del = await request.post(`/api/discard/${encodeURIComponent(doc.batch)}`);
+  expect(del.ok()).toBeTruthy();
+  q = await (await request.get('/api/queue')).json();
+  expect(q.documents.find(d => d.batch === doc.batch)).toBeUndefined();
+
+  // The scan is kept, out of the queue, rather than erased.
+  const fs = require('fs'), path = require('path');
+  expect(fs.existsSync(path.join(__dirname, '..', 'spool-archive',
+                                 doc.pages[0].id))).toBe(true);
+});
+
+test('a document with something to keep cannot be deleted', async ({ request }) => {
+  const { documents } = await (await request.get('/api/queue')).json();
+  const doc = documents.find(d => d.counts.total > 1);
+  const corners = (f) => {
+    const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+      .map(([x, y]) => [f.cx + x * ca - y * sa, f.cy + x * sa + y * ca]);
+  };
+  const p = doc.pages[0];
+  await request.post(`/api/accept/${encodeURIComponent(p.id)}`, {
+    data: { corners: corners(p.seeded), frame: p.seeded, rotation: 0,
+            target: p.seeded.format } });
+  const del = await request.post(`/api/discard/${encodeURIComponent(doc.batch)}`);
+  expect(del.status()).toBe(409);
+});
