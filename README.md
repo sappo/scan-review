@@ -83,29 +83,44 @@ degrees in 201 steps, keep the top 100 lines, drop any scoring under half the
 mean - or no confidence at all when the winning cluster holds under half the
 candidates.
 
-## Multi-page documents
+## Documents and pages
 
-**One ADF run is one document.** `adf-scan` writes a run as `BASE-01.png`,
-`BASE-02.png`, ... so the basename is the batch id; the Pi sends it with each
-scan as a `batch` form field, and the backend keeps one staged document per
-batch. Two letters scanned in the same sitting therefore cannot merge into one
-PDF, which they previously did unless you remembered to Send in between.
+The queue is a list of **documents**; a document is one ADF run. The chevrons in
+the top bar step between documents and the badge reads the document position,
+`2/3`. A **filmstrip** above the toolbar shows every page of the current
+document with its state: plain for undecided, a blue check for accepted, dimmed
+with a red cross for rejected, outlined for the one you are looking at.
 
-The Send button carries a badge with the number of pages staged for the current
-batch. Accepting the last page of a batch moves the queue on to the next one,
-whose tray is empty - Send still offers the batch you just finished, because
-that is exactly when you want it.
+Pages are accepted or rejected individually. Deciding one moves you to the next
+undecided page of the same document, wrapping once - the filmstrip lets pages be
+decided out of order, so the next one may be behind you. Deciding the last leaves
+you where you are with Send lit, which is the last look before a PDF is made.
+
+**Decisions are reversible until the document is sent.** Tapping any tile in the
+filmstrip opens that page, decided ones included, which returns it to undecided.
+Sending is the one irreversible step: the PDF has been delivered.
+
+**Send needs every page decided.** Sending half a document would produce a second
+PDF for the same ADF run later, and one run is one document.
+
+**Send becomes Delete when every page is declined.** There is no PDF to make
+then, so the only way to close the document is to delete it - which moves its
+scans to `spool-archive/` rather than erasing them. A wholly declined document
+deliberately does NOT disappear on its own: it would take the only route back to
+its pages with it, and since a one-page document is the common case, the first
+reject would have been silently final.
 
 `finalize` lays out **each page at its own size**, from its pixel dimensions at
-200 dpi. It used to force an A4 layout on every page, so a 148x105mm landscape
-A6 came out as a 210x297mm portrait A4 - throwing away the true size that the
-ratio-locked frame exists to produce. Pages are sorted by page number rather
-than accept order, since stepping back through the queue makes accept order
-unreliable.
+200 dpi, and sorts by page number - accept order is unreliable once you can step
+back through a document.
 
 The Pi's panel used to pass a constant basename (`a4`, `a6`), so every A4 scan
 was `a4-01.png`: consecutive batches were indistinguishable and the second
-collided with the first. `scanui.py` now passes `a4-<timestamp>`.
+collided with the first. `scanui.py` now passes `a4-<timestamp>`, and that
+basename is the batch id the whole document model rests on. A batch id that
+matches `<size>-<date>-<time>` is shown as `A4 · 31 Aug 10:15`; anything else -
+a manual `adf-scan report` run - is shown unchanged rather than given an
+invented date.
 
 ## Known limits
 
@@ -116,13 +131,16 @@ collided with the first. `scanui.py` now passes `a4-<timestamp>`.
   "Review UI" below - clamping cost 3 degrees of residual skew on a real A6.
 - The review UI trusts whoever can reach it, behind HTTP basic auth on the LAN.
 - Reordering pages within a document is not possible; they come out in scan
-  order. Removing an accepted page from a staged document is not possible
-  either - reject it before accepting.
+  order.
+- Sending is the only irreversible action. Once a document is sent its pages
+  cannot be reopened; the recourse is on the paperless side.
+- Deleting a document moves its scans to `spool-archive/`. Nothing empties that
+  directory automatically.
 
 ## Tests
 
-    ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 104 e2e (52 mobile, 52 desktop)
+    ./.venv/bin/python -m pytest tests/     # 46 geometry / deskew / queue units
+    npx playwright test                     # 127 e2e (64 mobile, 63 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -152,6 +170,7 @@ each other - the same constraint that forbids `uvicorn --workers N`.
 
     detect.py         find the sheet (corners, skew, coverage)
     deskew.py         measure the angle of the printed CONTENT
+    documents.py      group pages into documents: order, counts, labels
     frame.py          the ratio-locked crop: seed fit, frame <-> corners, error
     warp.py           deskew/crop at a true ISO size
     app.py            queue, accept/reject, PDF assembly, mock delivery
