@@ -415,6 +415,12 @@ def deliveries():
     return json.loads(DELIVERY_LOG.read_text()) if DELIVERY_LOG.exists() else []
 
 
+@app.get("/ui.js")
+def ui_js():
+    return Response(content=(ROOT / "ui.js").read_text(),
+                    media_type="application/javascript")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (ROOT / "ui.html").read_text()
