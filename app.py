@@ -197,6 +197,9 @@ class AcceptBody(BaseModel):
     corners: list[list[float]]
     rotation: int = 0
     target: str = "free"      # "A4" | "A6" | ... | "free"
+    # The ratio-locked frame behind those corners, so the ground-truth record
+    # can decompose the error per axis instead of blending it into one number.
+    frame: dict | None = None
 
 
 class PreviewBody(BaseModel):
@@ -232,6 +235,11 @@ def accept(page_id: str, body: AcceptBody):
         if not page or page["status"] != "pending":
             raise HTTPException(404, "not pending")
         img = cv2.imread(page["source"])
+        if img is None:
+            # The spool file was deleted or moved out from under a queued page.
+            # Without this the failure is an AttributeError deep in warp() and
+            # surfaces as an opaque 500.
+            raise HTTPException(410, f"source image gone: {page['source']}")
         result = warp(img, np.array(body.corners, dtype=np.float32), target=body.target)
         out_img = result.image
         for _ in range((body.rotation // 90) % 4):
@@ -244,31 +252,38 @@ def accept(page_id: str, body: AcceptBody):
                     corners=body.corners, format=body.target,
                     out_width=int(out_img.shape[1]), out_height=int(out_img.shape[0]),
                     outside=result.outside)
-        # Ground truth for refining the detector: what it proposed versus what a
-        # human actually accepted. Written on every accept, including unchanged
-        # ones - agreement is as informative as correction.
+        # Ground truth for refining the detector: what it PROPOSED versus what a
+        # human ACCEPTED. Written on every accept, including unchanged ones -
+        # agreement is as informative as correction, and a dataset of only
+        # corrections would be biased.
         detected = page.get("detected", {})
-        corner_shift = None
-        if detected.get("corners"):
-            d = np.asarray(detected["corners"], dtype=float)
-            f = np.asarray(body.corners, dtype=float)
-            corner_shift = float(np.max(np.linalg.norm(d - f, axis=1)))
+        seeded = page.get("seeded")
+        if body.frame:
+            accepted_frame = dict(body.frame)
+        else:
+            accepted_frame = frame_mod.frame_from_corners(body.corners)
+            accepted_frame["format"] = body.target
+            accepted_frame["orientation"] = frame_mod.orientation_of(accepted_frame)
+        accepted_frame["rotation"] = body.rotation
         record = {
-            "id": page_id,
+            "page": page_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "schema": 2,
             "source": page["source"],
-            "scan_width": page["width"], "scan_height": page["height"],
+            "scan": {"width": page["width"], "height": page["height"], "dpi": 200},
             "hint": page.get("hint"),
             "detected": {"corners": detected.get("corners"),
                          "angle": detected.get("angle"),
                          "format": detected.get("format")},
-            "accepted": {"corners": body.corners,
-                         "angle": quad_angle(body.corners),
-                         "format": body.target,
-                         "rotation": body.rotation},
-            "corner_shift_px": corner_shift,
-            "format_agreed": detected.get("format") == body.target,
-            "at": datetime.now(timezone.utc).isoformat(),
+            "seeded": seeded,
+            "accepted": dict(accepted_frame, corners=body.corners),
+            "error": (frame_mod.frame_error(seeded, accepted_frame)
+                      if seeded else None),
         }
+        if record["error"] is not None:
+            hint = page.get("hint")
+            record["error"]["hint_agrees"] = (
+                None if hint is None else hint == accepted_frame.get("format"))
         (TRUTH / f"{page_id}.json").write_text(json.dumps(record, indent=2))
 
         s["document"].append(page_id)

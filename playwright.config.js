@@ -1,5 +1,6 @@
 module.exports = {
   testDir: './tests',
+  globalSetup: require.resolve('./tests/reset-queue.js'),
   timeout: 30000,
   use: {
     headless: true,
