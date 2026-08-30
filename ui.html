@@ -130,8 +130,8 @@
 
 <div class="bar" id="top">
   <div class="pill">
-    <button data-testid="btn-undo" onclick="undo()" title="Undo" aria-label="Undo">
-      <svg><use href="/icons.svg#undo"/></svg></button>
+    <button data-testid="btn-reset" onclick="resetFrame()" title="Reset to detected"
+            aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
   </div>
   <div class="pill" id="nav">
     <button data-testid="btn-prev" onclick="step(-1)" title="Previous page"
@@ -194,8 +194,8 @@
             title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
     <button data-testid="btn-peek" onclick="togglePeek()"
             title="Preview result" aria-label="Preview result"><svg><use href="/icons.svg#peek"/></svg></button>
-    <button data-testid="btn-reset" onclick="resetFrame()"
-            title="Reset to detected" aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
+    <button data-testid="btn-undo" onclick="undo()"
+            title="Undo" aria-label="Undo"><svg><use href="/icons.svg#undo"/></svg></button>
     <button class="counted" data-testid="btn-finalize" onclick="finalize()"
             title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg><span
             class="badge" data-testid="staged-count"></span></button>

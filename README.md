@@ -275,13 +275,13 @@ accepted, not just what is left. On a phone it collapses to that badge between
 the two button clusters and expands onto its own row when tapped; a filename has
 nowhere near enough width to be legible inline on a 412px screen.
 
-The top bar holds only undo, the queue navigator, and the two decisions -
+The top bar holds only reset, the queue navigator, and the two decisions -
 reject and accept. That is what keeps it on one row: with peek still up there
 it fitted at exactly 412px and wrapped at 390, 375 and 360, pushing accept and
 reject onto a second line on most phones.
 
 Everything else lives in **one** permanently visible bottom bar - modes (crop,
-straighten), a separator, then actions (page setup, gridlines, peek, reset,
+straighten), a separator, then actions (page setup, gridlines, peek, undo,
 send). Its buttons are 38px wide rather than 44: seven of them plus a separator
 do not fit a 360px screen otherwise, and two stacked bars took too much of the
 page. The full 44px height is kept, so only the horizontal target shrinks, and
