@@ -59,7 +59,7 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
-    npx playwright test                     # 62 e2e (31 mobile, 31 desktop)
+    npx playwright test                     # 68 e2e (34 mobile, 34 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -163,9 +163,16 @@ Two modes:
 
 - **Crop** - white corner brackets and edge midpoint ticks, everything outside
   the frame dimmed.
-- **Straighten** - a tick dial spanning the full width. It reads **0 at the
-  detected angle**, so it shows the manual correction on top of detection;
-  +/-0.1 degree buttons for fine work. A whole drag is one undo step.
+- **Straighten** - a tick dial with the +/-0.1 degree steps built into the same
+  row. It reads **0 at the detected angle**, so it shows the manual correction
+  on top of detection, and snaps to 0.1 degrees. A whole drag is one undo step.
+
+The crop frame is drawn in BOTH modes and is draggable in both. It used to be
+hidden while straightening, which meant dragging something invisible - that read
+as the gesture being broken rather than merely unlit.
+
+**Page size and rotation** live behind their own button rather than a permanent
+row: they are set at most once per page, and the scan should have the screen.
 
 Gestures:
 
@@ -175,8 +182,16 @@ Gestures:
   side handle reads as a promise the geometry cannot keep. The grab zone is
   `min(24px, a quarter of the frame's smaller screen dimension)`, so a small
   frame still keeps a movable core.
-- One finger in the **interior** moves the whole frame, but only after ~10px of
-  travel. Without that threshold a tap or a little jitter shifts a settled crop.
+- One finger in the **interior** moves the whole frame, after ~10px of travel so
+  a tap or a little jitter cannot shift a settled crop. Movement is damped by
+  zoom: about 30% of the finger's travel at 1x, easing to 1:1 by 3x, because at
+  1x one finger pixel is several scan pixels.
+
+  All drag maths is measured against the frame as it was when the gesture
+  *began*, never the live frame. `toImageWith()`'s origin is the frame centre,
+  so a handler that moves the centre and then measures the next delta against
+  the moved origin re-counts its own movement: a 100px drag moved the frame 8.5x
+  too far, and worse the more pointer events arrived.
 - One finger **outside the frame does nothing**, so steadying the phone at the
   edge of the screen cannot nudge a crop that was already settled.
 - **Two fingers** pan and zoom the view (1x to 8x) and never touch the frame.

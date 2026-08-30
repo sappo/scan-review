@@ -48,6 +48,11 @@ async function ready(page) {
   await page.waitForFunction(() => window.state && window.state.img);
 }
 async function frameOf(page) { return page.evaluate(() => ({ ...window.state.frame })); }
+/** Page size / rotation now live behind their own button. */
+async function openPageSetup(page) {
+  if (await page.getByTestId('fmt-A4').isHidden())
+    await page.getByTestId('btn-pagesetup').click();
+}
 
 test('the frame renders axis-aligned while the scan tilts under it', async ({ page }) => {
   await ready(page);
@@ -197,6 +202,7 @@ test('the raster paints blue gridlines and a red centre cross, and toggles off',
 test('changing format re-locks the ratio about the same centre', async ({ page }) => {
   await ready(page);
   const before = await frameOf(page);
+  await openPageSetup(page);
   await page.getByTestId('fmt-A6').click();
   const f = await frameOf(page);
   const want = await page.evaluate(() =>
@@ -210,6 +216,7 @@ test('changing format re-locks the ratio about the same centre', async ({ page }
 test('swapping orientation transposes the frame', async ({ page }) => {
   await ready(page);
   const before = await frameOf(page);
+  await openPageSetup(page);
   await page.getByTestId('btn-swap').click();
   const f = await frameOf(page);
   expect(f.w).toBeCloseTo(before.h, 6);
@@ -219,6 +226,7 @@ test('swapping orientation transposes the frame', async ({ page }) => {
 test('rotate cycles output rotation without moving the frame', async ({ page }) => {
   await ready(page);
   const before = await frameOf(page);
+  await openPageSetup(page);
   await page.getByTestId('btn-rotate').click();
   expect(await page.evaluate(() => window.state.rotation)).toBe(90);
   expect(await frameOf(page)).toEqual(before);
@@ -229,6 +237,7 @@ test('rotate visibly turns the view, not just a hidden flag', async ({ page }) =
   const before = await page.evaluate(() => {
     const r = window.frameRectOnScreen(); return { w: r.w, h: r.h };
   });
+  await openPageSetup(page);
   await page.getByTestId('btn-rotate').click();
   const after = await page.evaluate(() => {
     const r = window.frameRectOnScreen(); return { w: r.w, h: r.h };
@@ -240,6 +249,7 @@ test('rotate visibly turns the view, not just a hidden flag', async ({ page }) =
 
 test('a corner still resizes correctly when the view is rotated', async ({ page }) => {
   await ready(page);
+  await openPageSetup(page);
   await page.getByTestId('btn-rotate').click();            // view turned 90
   const want = await page.evaluate(() => window.state.frame.h / window.state.frame.w);
   // Screen top-left is the frame's bottom-left when turned 90, so the pinned
@@ -288,6 +298,7 @@ test('the sides are not draggable - only corners resize', async ({ page }) => {
 test('reset clears the undo history too', async ({ page }) => {
   await ready(page);
   const seeded = await page.evaluate(() => ({ ...window.state.page.seeded }));
+  await openPageSetup(page);
   await page.getByTestId('fmt-A6').click();
   await page.evaluate(() => window.setDial(3));
   await page.getByTestId('btn-reset').click();
@@ -302,6 +313,7 @@ test('reset clears the undo history too', async ({ page }) => {
 test('reset returns to the seeded frame after several edits', async ({ page }) => {
   await ready(page);
   const seeded = await page.evaluate(() => ({ ...window.state.page.seeded }));
+  await openPageSetup(page);
   await page.getByTestId('fmt-A6').click();
   await page.evaluate(() => window.setDial(3));
   await page.getByTestId('btn-reset').click();
@@ -414,7 +426,9 @@ test('controls float over a full-bleed canvas', async ({ page }) => {
   await ready(page);
   const geo = await page.evaluate(() => {
     const cv = document.getElementById('cv').getBoundingClientRect();
-    const pill = document.querySelector('#controls .pill').getBoundingClientRect();
+    // The mode pill: always visible, unlike the page-setup panel.
+    const pill = document.querySelector('[data-testid=mode-crop]')
+                   .closest('.pill').getBoundingClientRect();
     return { cv: { w: cv.width, h: cv.height }, pill: { top: pill.top, bottom: pill.bottom },
              vw: innerWidth, vh: innerHeight };
   });
@@ -456,16 +470,73 @@ test('a few pixels of overhang does not raise the warning', async ({ page }) => 
   await expect(page.getByTestId('outside-flag')).toBeVisible();
 });
 
-test('switching mode really hides the other panel', async ({ page }) => {
+test('the dial appears only in straighten mode', async ({ page }) => {
   await ready(page);
   // `hidden` alone is not enough: a class setting `display` overrides the UA
   // stylesheet, so assert on visibility rather than on the attribute.
-  await expect(page.getByTestId('fmt-A4')).toBeVisible();
   await expect(page.getByTestId('dial')).toBeHidden();
   await page.getByTestId('mode-straighten').click();
-  await expect(page.getByTestId('fmt-A4')).toBeHidden();
   await expect(page.getByTestId('dial')).toBeVisible();
   await page.getByTestId('mode-crop').click();
-  await expect(page.getByTestId('fmt-A4')).toBeVisible();
   await expect(page.getByTestId('dial')).toBeHidden();
 });
+
+test('page size and rotation stay behind their own button', async ({ page }) => {
+  await ready(page);
+  for (const id of ['fmt-A4', 'fmt-A5', 'fmt-A6', 'btn-swap', 'btn-rotate'])
+    await expect(page.getByTestId(id)).toBeHidden();
+  await page.getByTestId('btn-pagesetup').click();
+  for (const id of ['fmt-A4', 'fmt-A5', 'fmt-A6', 'btn-swap', 'btn-rotate'])
+    await expect(page.getByTestId(id)).toBeVisible();
+  await page.getByTestId('btn-pagesetup').click();
+  await expect(page.getByTestId('fmt-A4')).toBeHidden();
+});
+
+test('the frame is visible and draggable in straighten mode too', async ({ page }) => {
+  await ready(page);
+  await page.getByTestId('mode-straighten').click();
+  // Brackets are painted in both modes; dragging something invisible read as
+  // the gesture being broken.
+  const painted = await page.evaluate(() => {
+    const cv = document.getElementById('cv');
+    const r = window.frameRectOnScreen();
+    const d = cv.getContext('2d').getImageData(
+      Math.max(0, r.x | 0), Math.max(0, r.y | 0), 30, 30).data;
+    let white = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (d[i] > 230 && d[i + 1] > 230 && d[i + 2] > 230) white++;
+    return white;
+  });
+  expect(painted).toBeGreaterThan(20);
+
+  const before = await frameOf(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy); await page.mouse.down();
+  await page.mouse.move(cx + 70, cy + 50, { steps: 10 }); await page.mouse.up();
+  const after = await frameOf(page);
+  expect(Math.hypot(after.cx - before.cx, after.cy - before.cy)).toBeGreaterThan(1);
+});
+
+test('dragging moves the frame by the damped distance, not a compounding one',
+  async ({ page }) => {
+    await ready(page);
+    const before = await frameOf(page);
+    const { s, dpr, gain } = await page.evaluate(() => {
+      const cv = document.getElementById('cv');
+      return { s: Math.min((cv.width - 40) / window.state.img.naturalWidth,
+                           (cv.height - 40) / window.state.img.naturalHeight),
+               dpr: window.devicePixelRatio || 1, gain: window.moveGain() };
+    });
+    const box = await page.getByTestId('canvas').boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    // Many small steps: the old handler measured each delta against an origin
+    // it had just moved, so movement grew with the NUMBER of pointer events.
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    for (let i = 1; i <= 20; i++) await page.mouse.move(cx + i * 5, cy);
+    await page.mouse.up();
+    const after = await frameOf(page);
+    // 100 CSS px of travel, less the 10px activation threshold.
+    const expected = ((100 - 10) * dpr / s) * gain;
+    expect(after.cx - before.cx).toBeCloseTo(expected, 0);
+  });

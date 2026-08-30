@@ -24,6 +24,7 @@ const BAND_MAX = 24;        // screen px: half-extent of a corner's grab zone
 const MOVE_THRESHOLD = 10;  // screen px of travel before a move begins
 const ZOOM_MIN = 1, ZOOM_MAX = 8;
 const DIAL_RANGE = 15;    // degrees either side of the detected angle
+const DIAL_STEP = 0.1;    // the dial snaps to this, matching the +/- buttons
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
@@ -38,7 +39,7 @@ const state = {
   detectedAngle: 0, seedW: 0,
   format: 'A4', orientation: 'portrait', rotation: 0,
   view: { zoom: 1, panX: 0, panY: 0 },
-  mode: 'crop', grid: true, peek: false, history: [],
+  mode: 'crop', grid: true, peek: false, pageSetup: false, history: [],
 };
 window.state = state;
 
@@ -80,12 +81,29 @@ function toScreen([x, y]) {
   return [cv.width / 2 + v.panX + (dx * ca - dy * sa) * s,
           cv.height / 2 + v.panY + (dx * sa + dy * ca) * s];
 }
-function toImage([sx, sy]) {
-  const f = state.frame, v = state.view, s = baseScale() * v.zoom;
+/** Screen -> image, measured against an EXPLICIT frame.
+ *
+ * This has to be explicit. The origin is the frame's centre, and a drag handler
+ * that mutates the centre and then measures the next delta against the moved
+ * origin re-counts its own movement every event: a 100px drag moved the frame
+ * 8.5x too far, worse the more pointer events arrived. Every gesture therefore
+ * measures against `grabFrame` - the frame as it was when the drag began.
+ */
+function toImageWith(f, [sx, sy]) {
+  const v = state.view, s = baseScale() * v.zoom;
   const px = (sx - cv.width / 2 - v.panX) / s;
   const py = (sy - cv.height / 2 - v.panY) / s;
   const a = (f.angle - viewRot()) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
   return [f.cx + px * ca - py * sa, f.cy + px * sa + py * ca];
+}
+function toImage(p) { return toImageWith(state.frame, p); }
+
+/** A screen-space delta as an image-space delta: rotation and scale only, no
+ *  origin, so it cannot drift as the frame moves. */
+function screenDeltaToImage(f, [dsx, dsy]) {
+  const s = baseScale() * state.view.zoom;
+  const a = (f.angle - viewRot()) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  return [(dsx * ca - dsy * sa) / s, (dsx * sa + dsy * ca) / s];
 }
 window.toScreen = toScreen; window.toImage = toImage;
 
@@ -135,9 +153,12 @@ function render() {
   ctx.restore();
 
   const r = frameRectOnScreen();
-  if (state.mode === 'crop') { dimOutside(r); hatchOutsideScan(); }
+  // Drawn in BOTH modes: the frame is draggable in both, and hiding it in
+  // straighten mode meant dragging something invisible, which read as the
+  // gesture being broken rather than merely unlit.
+  dimOutside(r); hatchOutsideScan();
   drawGrid(r);                            // always called; clears when grid off
-  if (state.mode === 'crop') drawBrackets(r);
+  drawBrackets(r);
   if (state.page) showFlags();
 }
 window.render = render;
@@ -254,23 +275,26 @@ window.hitTest = hitTest;
 
 /** Frame-local coordinates. The frame is axis-aligned on screen, so this is
  *  just the inverse rotation about its centre. */
-function toLocal([x, y]) {
-  const f = state.frame, a = -f.angle * Math.PI / 180;
+function toLocalWith(f, [x, y]) {
+  const a = -f.angle * Math.PI / 180;
   const dx = x - f.cx, dy = y - f.cy;
   return [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
 }
-function fromLocal([lx, ly]) {
-  const f = state.frame, a = f.angle * Math.PI / 180;
+function fromLocalWith(f, [lx, ly]) {
+  const a = f.angle * Math.PI / 180;
   return [f.cx + lx * Math.cos(a) - ly * Math.sin(a),
           f.cy + lx * Math.sin(a) + ly * Math.cos(a)];
 }
 
-/** Resize so the ratio holds and the opposite corner/edge stays put. */
-function applyResize(kind, ix, imgPt) {
-  const f = state.frame;
+/** Resize so the ratio holds and the opposite corner stays put.
+ *
+ * Measured against `g`, the frame at the start of the gesture, not the live
+ * frame this function is about to modify - see toImageWith().
+ */
+function applyResize(kind, ix, screenPt, g) {
   const ratio = ratioOf(state.format, state.orientation);
-  const [lx, ly] = toLocal(imgPt);
-  const hw = f.w / 2, hh = f.h / 2;
+  const [lx, ly] = toLocalWith(g, toImageWith(g, screenPt));
+  const hw = g.w / 2, hh = g.h / 2;
   // Corners only. With the ratio locked, dragging a side cannot mean what it
   // looks like it means - the opposite dimension has to follow - so a side
   // handle reads as a promise the geometry cannot keep.
@@ -282,14 +306,26 @@ function applyResize(kind, ix, imgPt) {
   if (Math.min(nw, nh) < MIN_SIDE) return;  // warp() dies on a degenerate crop
   // Recentre so the anchor point does not move.
   const dirX = ax <= 0 ? 1 : -1, dirY = ay <= 0 ? 1 : -1;
-  const [ncx, ncy] = fromLocal([ax + dirX * nw / 2, ay + dirY * nh / 2]);
+  const [ncx, ncy] = fromLocalWith(g, [ax + dirX * nw / 2, ay + dirY * nh / 2]);
+  const f = state.frame;
   f.cx = ncx; f.cy = ncy; f.w = nw; f.h = nh;
 }
 window.applyResize = applyResize;
 
 // --------------------------------------------------------------- gestures
 
-let grab = null, lastImg = null, grabStart = null, moveArmed = true;
+let grab = null, grabStart = null, grabFrame = null, moveArmed = true;
+
+/** How much of the finger's travel the frame takes, by zoom.
+ *
+ * At 1x the whole scan is squeezed into a few hundred pixels, so one finger
+ * pixel is several scan pixels and 1:1 is unusably twitchy. By 3x a pixel is
+ * already fine, so the damping eases out and the frame tracks the finger.
+ */
+function moveGain() {
+  return Math.min(1, 0.3 + 0.7 * (state.view.zoom - 1) / 2);
+}
+window.moveGain = moveGain;
 const touches = new Map();
 let pinch = null;
 
@@ -311,8 +347,9 @@ cv.addEventListener('pointerdown', e => {
   pushHistory();
   // A move does not start until the finger has actually travelled. Without
   // this a tap or a little jitter shifts a crop that was already settled.
-  grab = hit; lastImg = toImage(canvasPt(e));
+  grab = hit;
   grabStart = canvasPt(e);
+  grabFrame = { ...state.frame };
   moveArmed = hit.kind !== 'move';
   cv.setPointerCapture(e.pointerId);
 });
@@ -336,16 +373,18 @@ cv.addEventListener('pointermove', e => {
     if (Math.hypot(pt[0] - grabStart[0], pt[1] - grabStart[1]) < MOVE_THRESHOLD * dpr)
       return;                               // below the threshold: ignore entirely
     moveArmed = true;
-    lastImg = toImage(pt);                  // re-anchor so the frame does not jump
+    grabStart = pt;                         // re-baseline so the frame does not jump
+    grabFrame = { ...state.frame };
     return;
   }
-  const img = toImage(pt);
   if (grab.kind === 'move') {
-    state.frame.cx += img[0] - lastImg[0];
-    state.frame.cy += img[1] - lastImg[1];
-    lastImg = img;
+    const g = moveGain();
+    const [dx, dy] = screenDeltaToImage(
+      grabFrame, [pt[0] - grabStart[0], pt[1] - grabStart[1]]);
+    state.frame.cx = grabFrame.cx + dx * g;
+    state.frame.cy = grabFrame.cy + dy * g;
   } else {
-    applyResize(grab.kind, grab.ix, img);
+    applyResize(grab.kind, grab.ix, pt, grabFrame);
   }
   render();
 });
@@ -354,7 +393,7 @@ for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
   cv.addEventListener(ev, e => {
     touches.delete(e.pointerId);
     if (touches.size < 2) pinch = null;
-    if (grab) { grab = null; lastImg = null; grabStart = null; moveArmed = true; render(); }
+    if (grab) { grab = null; grabStart = null; grabFrame = null; moveArmed = true; render(); }
   });
 }
 
@@ -385,7 +424,9 @@ function dialValue() { return state.frame.angle - state.detectedAngle; }
 window.dialValue = dialValue;
 
 function setDial(deg) {
-  const d = Math.max(-DIAL_RANGE, Math.min(DIAL_RANGE, deg));
+  // Snapped to DIAL_STEP so the dial lands on clean values instead of 2.40000001.
+  const d = Math.round(
+    Math.max(-DIAL_RANGE, Math.min(DIAL_RANGE, deg)) / DIAL_STEP) * DIAL_STEP;
   state.frame.angle = state.detectedAngle + d;
   q('angle-readout').textContent = `${d >= 0 ? '+' : ''}${d.toFixed(2)}°`;
   drawDial();
@@ -444,7 +485,6 @@ function setMode(m) {
   state.mode = m;
   q('mode-crop').setAttribute('aria-pressed', String(m === 'crop'));
   q('mode-straighten').setAttribute('aria-pressed', String(m === 'straighten'));
-  document.getElementById('panel-crop').hidden = m !== 'crop';
   document.getElementById('panel-straighten').hidden = m !== 'straighten';
   if (m === 'straighten') drawDial();
   render();
@@ -499,6 +539,15 @@ function resetFrame() {
   syncChips();
   if (state.mode === 'straighten') setDial(0); else render();
 }
+
+/** Page size and rotation are set once per page at most, so they live behind a
+ *  button rather than occupying a permanent row. */
+function togglePageSetup() {
+  state.pageSetup = !state.pageSetup;
+  q('btn-pagesetup').setAttribute('aria-pressed', String(state.pageSetup));
+  document.getElementById('panel-crop').hidden = !state.pageSetup;
+}
+window.togglePageSetup = togglePageSetup;
 
 function toggleGrid() {
   state.grid = !state.grid;

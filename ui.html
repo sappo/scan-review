@@ -54,11 +54,14 @@
                 font-weight:600; letter-spacing:.02em; }
   button:disabled { opacity:.35; }
 
-  #dialwrap { pointer-events:auto; background:var(--float); border-radius:18px;
-              backdrop-filter:blur(10px); padding:6px 10px 2px;
-              box-shadow:0 4px 20px rgba(0,0,0,.45); width:min(420px, calc(100vw - 24px)); }
-  #dial { width:100%; height:48px; touch-action:none; display:block; }
-  #panel-straighten { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  #dialwrap { pointer-events:auto; background:var(--float); border-radius:26px;
+              backdrop-filter:blur(10px); padding:2px 4px 0;
+              box-shadow:0 4px 20px rgba(0,0,0,.45); }
+  #dial { flex:1; min-width:0; height:48px; touch-action:none; display:block; }
+  #panel-straighten { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  /* The +/- steps live in the dial row itself rather than a separate pill. */
+  .dialrow { display:flex; align-items:center; gap:2px; padding:2px 4px;
+             width:min(420px, calc(100vw - 24px)); }
   .readout { text-align:center; font-variant-numeric:tabular-nums;
              color:var(--dim); font-size:12px; padding-bottom:4px; }
 
@@ -110,7 +113,7 @@
 
   <!-- Format is the one place a glyph would be worse than the label: there is
        no icon for "A4". -->
-  <div class="pill wide" id="panel-crop">
+  <div class="pill wide" id="panel-crop" hidden>
     <button class="text" data-testid="fmt-A4" onclick="setFormat('A4')">A4</button>
     <button class="text" data-testid="fmt-A5" onclick="setFormat('A5')">A5</button>
     <button class="text" data-testid="fmt-A6" onclick="setFormat('A6')">A6</button>
@@ -122,14 +125,14 @@
 
   <div id="panel-straighten" hidden>
     <div id="dialwrap">
-      <canvas id="dial" data-testid="dial"></canvas>
+      <div class="dialrow">
+        <button data-testid="skew-minus-01" onclick="nudge(-0.1)" title="−0.1°" aria-label="Minus a tenth of a degree">
+          <svg><use href="/icons.svg#minus"/></svg></button>
+        <canvas id="dial" data-testid="dial"></canvas>
+        <button data-testid="skew-plus-01" onclick="nudge(0.1)" title="+0.1°" aria-label="Plus a tenth of a degree">
+          <svg><use href="/icons.svg#plus"/></svg></button>
+      </div>
       <div class="readout"><span data-testid="angle-readout">+0.00°</span></div>
-    </div>
-    <div class="pill">
-      <button data-testid="skew-minus-01" onclick="nudge(-0.1)" title="−0.1°" aria-label="Minus a tenth of a degree">
-        <svg><use href="/icons.svg#minus"/></svg></button>
-      <button data-testid="skew-plus-01" onclick="nudge(0.1)" title="+0.1°" aria-label="Plus a tenth of a degree">
-        <svg><use href="/icons.svg#plus"/></svg></button>
     </div>
   </div>
 
@@ -138,6 +141,8 @@
             title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
     <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
             title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
+    <button data-testid="btn-pagesetup" aria-pressed="false" onclick="togglePageSetup()"
+            title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="/icons.svg#pagesetup"/></svg></button>
     <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
             title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
     <button data-testid="btn-finalize" onclick="finalize()"
