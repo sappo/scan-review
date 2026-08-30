@@ -5,13 +5,36 @@ const reset = require('./reset-queue');
 // an empty queue - the first one consumed it - and tests depend on run order.
 test.beforeEach(() => reset());
 
-test('queue seeds a ratio-locked frame for every pending page', async ({ request }) => {
-  const r = await request.get('/api/queue');
-  expect(r.ok()).toBeTruthy();
-  const { pending } = await r.json();
-  expect(pending.length).toBeGreaterThan(0);
+/** Every page of every document in the queue. */
+async function allPages(request) {
+  const { documents } = await (await request.get('/api/queue')).json();
+  return documents.flatMap(d => d.pages);
+}
+
+test('the queue is a list of documents, each carrying its pages',
+  async ({ request }) => {
+    const r = await request.get('/api/queue');
+    expect(r.ok()).toBeTruthy();
+    const body = await r.json();
+    expect(body).not.toHaveProperty('pending');
+    expect(Array.isArray(body.documents)).toBe(true);
+    expect(body.documents.length).toBeGreaterThan(1);
+    for (const d of body.documents) {
+      expect(d.batch).toBeTruthy();
+      expect(d.label).toBeTruthy();
+      expect(d.pages.length).toBe(d.counts.total);
+      expect(d.ready).toBe(d.counts.pending === 0);
+      const nos = d.pages.map(p => p.page_no);
+      expect(nos).toEqual([...nos].sort((a, b) => a - b));
+      expect(new Set(d.pages.map(p => p.batch))).toEqual(new Set([d.batch]));
+    }
+  });
+
+test('queue seeds a ratio-locked frame for every page', async ({ request }) => {
+  const pages = await allPages(request);
+  expect(pages.length).toBeGreaterThan(0);
   const RATIO = { A4: 297 / 210, A5: 210 / 148, A6: 148 / 105 };
-  for (const p of pending) {
+  for (const p of pages) {
     expect(p.seeded, `page ${p.id} has no seeded frame`).toBeTruthy();
     const { w, h, format, orientation } = p.seeded;
     const want = orientation === 'landscape' ? 1 / RATIO[format] : RATIO[format];

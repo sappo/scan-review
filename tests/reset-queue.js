@@ -47,7 +47,7 @@ function reset() {
         s.ingested = s.ingested.filter(k => k !== id);
       }
     }
-    s.documents = {};      // one staged document per ADF batch
+    delete s.documents;    // removed: staged membership is a page status now
     fs.writeFileSync(STATE, JSON.stringify(s, null, 2));
   }
   for (const dir of [TRUTH, CONSUME]) {

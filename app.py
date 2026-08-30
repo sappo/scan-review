@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from detect import detect
+import documents as documents_mod
 import frame as frame_mod
 from deskew import text_skew
 from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
@@ -108,13 +109,14 @@ def quad_angle(corners):
 def load_state():
     if STATE.exists():
         s = json.loads(STATE.read_text())
-        s.setdefault("documents", {})
         s.setdefault("pages", {})
         s.setdefault("ingested", [])
+        # `documents` used to map batch -> staged page ids. Staged membership is
+        # derivable from page status, and keeping the two in step cost a bug
+        # once, so there is only one source of truth now.
+        s.pop("documents", None)
         return s
-    # `documents` is keyed by batch: one ADF run is one document, so two
-    # letters scanned in the same sitting cannot silently merge into one PDF.
-    return {"pages": {}, "documents": {}, "ingested": []}
+    return {"pages": {}, "ingested": []}
 
 
 def save_state(s):
@@ -287,9 +289,7 @@ class PreviewBody(BaseModel):
 @app.get("/api/queue")
 def queue():
     s, _ = refresh()
-    pending = [p for p in s["pages"].values() if p["status"] == "pending"]
-    pending.sort(key=lambda p: p["id"])
-    return {"pending": pending, "documents": s["documents"]}
+    return {"documents": documents_mod.build(s)}
 
 
 @app.get("/api/image/{page_id}")
@@ -362,7 +362,6 @@ def accept(page_id: str, body: AcceptBody):
                 None if hint is None else hint == accepted_frame.get("format"))
         (TRUTH / f"{page_id}.json").write_text(json.dumps(record, indent=2))
 
-        s["documents"].setdefault(page["batch"], []).append(page_id)
         save_state(s)
         return {"ok": True, "output": str(dest), "target": result.target,
                 "width": int(out_img.shape[1]), "height": int(out_img.shape[0])}
@@ -473,16 +472,22 @@ def finalize(batch: str):
     """
     with _lock:
         s = load_state()
-        # Ignore ids whose page has since gone: a dangling reference should not
-        # turn the whole batch into a 500.
-        ids = [i for i in (s["documents"].get(batch) or [])
-               if s["pages"].get(i, {}).get("output")]
-        if not ids:
-            raise HTTPException(404, f"no accepted pages in batch {batch!r}")
+        members = [p for p in s["pages"].values() if p.get("batch") == batch]
+        if not members:
+            raise HTTPException(404, f"no such batch {batch!r}")
+        if any(p["status"] == "pending" for p in members):
+            # Sending half a document would produce a second PDF for the same
+            # ADF run later, and one run is one document.
+            raise HTTPException(409, f"batch {batch!r} still has undecided pages")
         # Pages of a run come off the ADF in order; accept order can differ if
         # the operator stepped back through the queue.
-        ids.sort(key=lambda i: s["pages"][i].get("page_no", 0))
-        images = [s["pages"][i]["output"] for i in ids]
+        staged = [p for p in members
+                  if p["status"] == "accepted" and p.get("output")]
+        staged.sort(key=lambda p: (p.get("page_no") or 0, p["id"]))
+        if not staged:
+            raise HTTPException(404, f"no accepted pages in batch {batch!r}")
+        ids = [p["id"] for p in staged]
+        images = [p["output"] for p in staged]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         pdf_path = OUT / f"document-{stamp}.pdf"
         # Each page at ITS OWN size, from its pixel dimensions at the scan dpi.
@@ -500,7 +505,8 @@ def finalize(batch: str):
                     "at": datetime.now(timezone.utc).isoformat()})
         DELIVERY_LOG.write_text(json.dumps(log, indent=2))
 
-        s["documents"].pop(batch, None)
+        for p in staged:
+            p["status"] = "sent"
         save_state(s)
         return {"ok": True, "pdf": delivered.name, "batch": batch,
                 "pages": len(ids)}
