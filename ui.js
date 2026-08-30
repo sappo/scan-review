@@ -23,6 +23,9 @@ const MIN_SIDE = 64;      // source px; warp() dies under 8, and a frame smaller
 const BAND_MAX = 24;        // screen px: half-extent of a corner's grab zone
 const MOVE_THRESHOLD = 10;  // screen px of travel before a move begins
 const ZOOM_MIN = 1, ZOOM_MAX = 8;
+const LOUPE_ZOOM = 3;     // magnification of the corner views while dragging
+const LOUPE_SIZE = 96;    // CSS px, square
+const LOUPE_PAD = 10;     // CSS px clear of the safe area's edges
 const DIAL_RANGE = 15;    // degrees either side of the detected angle
 const DIAL_STEP = 0.1;    // the dial snaps to this, matching the +/- buttons
 
@@ -185,6 +188,7 @@ function render() {
   dimOutside(r); hatchOutsideScan();
   drawGrid(r);                            // always called; clears when grid off
   drawBrackets(r);
+  drawLoupes();
   if (state.page) showFlags();
 }
 window.render = render;
@@ -263,6 +267,109 @@ function drawGrid(r) {
   gctx.stroke();
   gctx.restore();
 }
+
+/** The canvas area not hidden behind the floating bars.
+ *
+ * Measured from the bars rather than hardcoded: they change height with the
+ * mode, and a loupe tucked under the top bar would be invisible exactly when
+ * it is needed. */
+function safeArea() {
+  const dpr = window.devicePixelRatio || 1;
+  const h = id => {
+    const el = document.getElementById(id);
+    return el ? el.getBoundingClientRect().height * dpr : 0;
+  };
+  const pad = LOUPE_PAD * dpr;
+  return { x: pad, y: h('top') + pad,
+           w: cv.width - 2 * pad,
+           h: cv.height - h('top') - h('controls') - 2 * pad };
+}
+
+/** Magnified views of the frame's corners, so a corner can be put on a paper
+ *  edge exactly rather than by eye.
+ *
+ * Pinned to the screen corners: while moving the frame the finger is in the
+ * middle, so nothing is covered, and the top-left loupe showing the top-left
+ * corner needs no explaining. While dragging one corner to resize, only that
+ * corner is shown, and it moves to the opposite side of the screen so the hand
+ * is not over it.
+ */
+function drawLoupes() {
+  state.loupes = [];
+  if (!grab || state.peek || !state.img) return;
+  if (grab.kind === 'move' && !moveArmed) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const size = LOUPE_SIZE * dpr;
+  const area = safeArea();
+  if (area.h < size * 2 || area.w < size * 2) return;   // no room; skip quietly
+
+  const turn = ((viewRot() / 90) | 0) % 4;
+  const spots = [[area.x, area.y],
+                 [area.x + area.w - size, area.y],
+                 [area.x + area.w - size, area.y + area.h - size],
+                 [area.x, area.y + area.h - size]];
+
+  const corners = cornersOf(state.frame);
+  let show;
+  if (grab.kind === 'corner') {
+    const screenIx = (grab.ix + turn) % 4;
+    show = [[grab.ix, (screenIx + 2) % 4]];             // opposite the finger
+  } else {
+    show = [0, 1, 2, 3].map(i => [i, (i + turn) % 4]);
+  }
+
+  const s = baseScale() * state.view.zoom * LOUPE_ZOOM;
+  for (const [ci, spot] of show) {
+    const [lx, ly] = spots[spot];
+    const cxm = lx + size / 2, cym = ly + size / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, size, size, 12 * dpr);
+    ctx.clip();
+    // Same amber as the main view's out-of-scan hatch, so a corner sitting off
+    // the paper reads as "past the edge of the scan" rather than as a black
+    // hole where the loupe failed to draw.
+    ctx.fillStyle = '#241d10';
+    ctx.fillRect(lx, ly, size, size);
+
+    ctx.save();
+    ctx.translate(cxm, cym);
+    ctx.rotate((viewRot() - state.frame.angle) * Math.PI / 180);
+    ctx.scale(s, s);
+    ctx.translate(-corners[ci][0], -corners[ci][1]);
+    ctx.drawImage(state.img, 0, 0);
+    // The frame's own outline, so the corner is seen against the paper edge.
+    ctx.strokeStyle = 'rgba(74,158,255,0.95)';
+    ctx.lineWidth = 1.5 * dpr / s;
+    ctx.beginPath();
+    ctx.moveTo(corners[0][0], corners[0][1]);
+    for (let i = 1; i < 4; i++) ctx.lineTo(corners[i][0], corners[i][1]);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // The crossbar: dead centre of the loupe IS the corner. An even line width
+    // on integer coordinates stays crisp; a 1px line at dpr 1 straddles two
+    // device pixels and washes out to half strength.
+    ctx.strokeStyle = 'rgba(255,70,70,0.95)';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(lx, cym); ctx.lineTo(lx + size, cym);
+    ctx.moveTo(cxm, ly); ctx.lineTo(cxm, ly + size);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, size, size, 12 * dpr);
+    ctx.stroke();
+    state.loupes.push({ x: lx, y: ly, size, corner: ci, spot });
+  }
+}
+window.drawLoupes = drawLoupes;
+window.LOUPE_ZOOM_FOR_TEST = LOUPE_ZOOM;
 
 // ------------------------------------------------------------- hit testing
 

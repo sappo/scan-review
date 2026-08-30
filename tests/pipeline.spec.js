@@ -855,3 +855,87 @@ test('a tap on the dial that moves nothing does not enable undo', async ({ page 
   await page.mouse.move(x + 4, y); await page.mouse.up();
   await expect(page.getByTestId('btn-undo')).toBeEnabled();
 });
+
+/** Hold a drag open so mid-gesture state can be inspected. */
+async function beginDrag(page, from, to) {
+  await page.mouse.move(from[0], from[1]);
+  await page.mouse.down();
+  await page.mouse.move(to[0], to[1], { steps: 8 });
+}
+
+test('moving the frame shows a magnified loupe at each corner', async ({ page }) => {
+  await ready(page);
+  expect(await page.evaluate(() => (window.state.loupes || []).length)).toBe(0);
+
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await beginDrag(page, [cx, cy], [cx + 70, cy + 50]);
+
+  const loupes = await page.evaluate(() => window.state.loupes);
+  expect(loupes).toHaveLength(4);
+  // One per frame corner, each in its own screen corner.
+  expect(loupes.map(l => l.corner).sort()).toEqual([0, 1, 2, 3]);
+  expect(new Set(loupes.map(l => l.spot)).size).toBe(4);
+
+  // They must be inside the canvas and clear of the floating bars.
+  const bars = await page.evaluate(() => {
+    const dpr = window.devicePixelRatio || 1;
+    return { top: document.getElementById('top').getBoundingClientRect().height * dpr,
+             ctl: document.getElementById('controls').getBoundingClientRect().height * dpr,
+             w: document.getElementById('cv').width,
+             h: document.getElementById('cv').height };
+  });
+  for (const l of loupes) {
+    expect(l.x).toBeGreaterThanOrEqual(0);
+    expect(l.y).toBeGreaterThanOrEqual(bars.top);
+    expect(l.x + l.size).toBeLessThanOrEqual(bars.w);
+    expect(l.y + l.size).toBeLessThanOrEqual(bars.h - bars.ctl);
+  }
+
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.state.loupes.length)).toBe(0);
+});
+
+test('the loupe is actually magnified and carries a crossbar', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await beginDrag(page, [cx, cy], [cx + 70, cy + 50]);
+
+  const probe = await page.evaluate(() => {
+    const l = window.state.loupes[0];
+    const d = document.getElementById('cv').getContext('2d')
+      .getImageData(l.x, l.y, l.size, l.size).data;
+    let red = 0, painted = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      painted++;
+      // Dominance, not absolute values: the crossbar antialiases against the
+      // page and never saturates at devicePixelRatio 1.
+      if (d[i] - d[i + 1] > 40 && d[i] - d[i + 2] > 40) red++;
+    }
+    return { red, painted, zoom: window.LOUPE_ZOOM_FOR_TEST };
+  });
+  // The crossbar spans the full width and height of the loupe.
+  expect(probe.red).toBeGreaterThan(100);
+  expect(probe.painted).toBeGreaterThan(1000);
+  await page.mouse.up();
+});
+
+test('resizing a corner shows only that corner, away from the finger',
+  async ({ page }) => {
+    await ready(page);
+    const r = await page.evaluate(() => {
+      const q = window.frameRectOnScreen();
+      const b = document.getElementById('cv').getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      return { x: b.x + q.x / dpr, y: b.y + q.y / dpr };
+    });
+    await beginDrag(page, [r.x, r.y], [r.x + 50, r.y + 50]);
+    const loupes = await page.evaluate(() => window.state.loupes);
+    expect(loupes).toHaveLength(1);
+    // Dragging the top-left corner: the loupe sits at the bottom-right.
+    expect(loupes[0].corner).toBe(0);
+    expect(loupes[0].spot).toBe(2);
+    await page.mouse.up();
+  });

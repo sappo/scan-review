@@ -122,7 +122,7 @@ collided with the first. `scanui.py` now passes `a4-<timestamp>`.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 98 e2e (49 mobile, 49 desktop)
+    npx playwright test                     # 104 e2e (52 mobile, 52 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -293,6 +293,18 @@ icon-only, from a vendored Lucide sprite (`build-icons.js` -> `icons.svg`); no
 CDN, so the UI works without internet and a page showing scanned documents makes
 no third-party requests. The A4/A5/A6 chips stay textual - there is no icon for
 "A4".
+
+**Corner loupes** - while you drag, each frame corner is shown magnified 3x
+with a red crossbar dead on the corner, so it can be placed on a paper edge
+exactly rather than by eye. Moving the frame shows all four, pinned to the
+screen corners: the finger is in the middle, so nothing is covered, and the
+top-left loupe showing the top-left corner needs no explaining. Dragging one
+corner shows only that one, moved to the opposite side of the screen so your
+hand is not over it. Their positions are measured from the floating bars at
+draw time, since a loupe tucked under the top bar would be invisible exactly
+when it is wanted. Area beyond the scan is filled with the same amber as the
+main view's out-of-scan hatch, so a corner off the paper reads as "past the
+edge" rather than as a black hole.
 
 **Undo and Reset** are disabled when they have nothing to do - undo when the
 history is empty, reset when the frame still matches the seed exactly. History
