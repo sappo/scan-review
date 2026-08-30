@@ -87,3 +87,48 @@ def test_seed_infers_landscape_from_the_real_a6():
 def test_seed_of_an_unknown_format_is_rejected():
     with pytest.raises(KeyError):
         F.seed_frame(A4_CORNERS, "free")
+
+
+SEED = {"cx": 896.0, "cy": 386.7, "w": 1166.3, "h": 827.5, "angle": -7.679,
+        "format": "A6", "orientation": F.LANDSCAPE}
+
+
+def _acc(**over):
+    return dict(SEED, **over)
+
+
+def test_error_is_zero_and_unchanged_for_an_untouched_accept():
+    e = F.frame_error(SEED, _acc())
+    assert e["centre_dist_px"] == pytest.approx(0.0, abs=1e-9)
+    assert e["scale"] == pytest.approx(1.0, abs=1e-9)
+    assert e["angle_deg"] == pytest.approx(0.0, abs=1e-9)
+    assert e["unchanged"] is True
+
+
+def test_error_reports_centre_shift_in_px_and_mm():
+    e = F.frame_error(SEED, _acc(cx=901.5, cy=388.3))
+    assert e["centre_px"] == pytest.approx([5.5, 1.6], abs=1e-6)
+    assert e["centre_dist_px"] == pytest.approx(5.728, abs=1e-3)
+    assert e["centre_dist_mm"] == pytest.approx(0.727, abs=1e-3)
+    assert e["unchanged"] is False
+
+
+def test_scale_uses_the_long_edge_so_it_survives_a_format_change():
+    # A6 landscape (long edge = w) accepted as A4 portrait (long edge = h).
+    e = F.frame_error(SEED, _acc(w=825.0, h=1166.3, format="A4",
+                                 orientation=F.PORTRAIT))
+    assert e["scale"] == pytest.approx(1.0, abs=1e-9)
+    assert e["format_agreed"] is False
+    assert e["orientation_agreed"] is False
+
+
+def test_angle_error_is_the_dial_value():
+    e = F.frame_error(SEED, _acc(angle=-7.380))
+    assert e["angle_deg"] == pytest.approx(0.299, abs=1e-6)
+
+
+def test_unchanged_tolerates_sub_pixel_noise_but_not_a_real_correction():
+    assert F.frame_error(SEED, _acc(cx=896.9))["unchanged"] is True
+    assert F.frame_error(SEED, _acc(cx=897.5))["unchanged"] is False
+    assert F.frame_error(SEED, _acc(angle=-7.66))["unchanged"] is True
+    assert F.frame_error(SEED, _acc(angle=-7.60))["unchanged"] is False

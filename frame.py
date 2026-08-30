@@ -95,3 +95,46 @@ def seed_frame(corners, fmt):
             "w": float(s * rw), "h": float(s * rh),
             "angle": quad_angle_deg(c),
             "format": fmt, "orientation": orientation}
+
+
+# What counts as "the operator accepted what was proposed". Deliberately loose
+# enough to absorb float noise and a stray sub-pixel touch, tight enough that a
+# real correction is never scored as agreement.
+UNCHANGED_TOL = {"centre_px": 1.0, "scale": 0.002, "angle_deg": 0.05}
+
+
+def frame_error(seeded, accepted, dpi=200):
+    """How far the operator moved the frame they were shown.
+
+    Compares SEEDED to ACCEPTED, not detected to accepted: the seeded frame is
+    what was actually on screen, so it is what agreement or correction is
+    relative to.
+
+    Each component indicts a different part of the detector - centre the mask
+    thresholds, scale the morphology kernels, angle minAreaRect, format
+    classify()'s tolerance - which the old single `corner_shift_px` could not.
+    """
+    dx = accepted["cx"] - seeded["cx"]
+    dy = accepted["cy"] - seeded["cy"]
+    dist = float(np.hypot(dx, dy))
+    # Long edge, so the comparison survives a portrait/landscape format change.
+    s_long = max(seeded["w"], seeded["h"])
+    a_long = max(accepted["w"], accepted["h"])
+    scale = float(a_long / s_long)
+    d_angle = float(accepted["angle"] - seeded["angle"])
+    fmt_ok = seeded.get("format") == accepted.get("format")
+    ori_ok = seeded.get("orientation") == accepted.get("orientation")
+    unchanged = bool(
+        dist <= UNCHANGED_TOL["centre_px"]
+        and abs(scale - 1.0) <= UNCHANGED_TOL["scale"]
+        and abs(d_angle) <= UNCHANGED_TOL["angle_deg"]
+        and fmt_ok and ori_ok
+        and int(accepted.get("rotation", 0)) == 0)
+    return {"centre_px": [float(dx), float(dy)],
+            "centre_dist_px": dist,
+            "centre_dist_mm": dist * 25.4 / dpi,
+            "scale": scale,
+            "angle_deg": d_angle,
+            "format_agreed": fmt_ok,
+            "orientation_agreed": ori_ok,
+            "unchanged": unchanged}
