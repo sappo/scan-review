@@ -122,7 +122,7 @@ collided with the first. `scanui.py` now passes `a4-<timestamp>`.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 90 e2e (45 mobile, 45 desktop)
+    npx playwright test                     # 92 e2e (46 mobile, 46 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
@@ -274,6 +274,13 @@ The title bar shows the **queue position** - `1/6`, counting up as pages are
 accepted, not just what is left. On a phone it collapses to that badge between
 the two button clusters and expands onto its own row when tapped; a filename has
 nowhere near enough width to be legible inline on a 412px screen.
+
+The top bar holds only undo, the queue navigator, and the two decisions -
+reject and accept. Everything else lives in the bottom clusters, split into
+actions (page setup, gridlines, peek, reset, send) and modes (crop, straighten).
+That split is what keeps the top bar on one row: with peek still up there it
+fitted at exactly 412px and wrapped at 390, 375 and 360, pushing accept and
+reject onto a second line on most phones.
 
 **Controls float** over a full-bleed canvas as translucent pills rather than
 sitting in a docked panel, so the scan gets the whole screen. Buttons are

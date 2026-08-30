@@ -767,3 +767,20 @@ test('each page goes into the PDF at its own true size', async ({ request }) => 
   expect(w / 72 * 25.4).toBeCloseTo(148, 0);
   expect(h / 72 * 25.4).toBeCloseTo(105, 0);
 });
+
+test('the top bar stays on one row at common phone widths', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'phone layout only');
+  // It used to fit at exactly 412px and wrap at 390, 375 and 360 - which is
+  // most phones - pushing accept and reject onto a second row.
+  for (const width of [360, 375, 390, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/');
+    await page.waitForFunction(() => window.state && window.state.img);
+    const rows = await page.evaluate(() => new Set(
+      [...document.getElementById('top').children]
+        .map(k => Math.round(k.getBoundingClientRect().top))).size);
+    expect(rows, `top bar wrapped at ${width}px`).toBe(1);
+    await expect(page.getByTestId('btn-accept')).toBeVisible();
+    await expect(page.getByTestId('btn-reject')).toBeVisible();
+  }
+});

@@ -22,7 +22,7 @@
   #grid { pointer-events:none; }
 
   .bar { position:absolute; left:0; right:0; display:flex; align-items:center;
-         gap:10px; padding:10px 12px; pointer-events:none; flex-wrap:wrap; }
+         gap:8px; padding:10px; pointer-events:none; flex-wrap:wrap; }
   /* space-between so that once the title wraps to its own row the two button
      clusters sit at the edges instead of bunching left with dead space. */
   #top { top:0; padding-top:calc(10px + env(safe-area-inset-top));
@@ -136,8 +136,6 @@
             aria-label="Next page"><svg><use href="/icons.svg#next"/></svg></button>
   </div>
   <div class="pill">
-    <button data-testid="btn-peek" onclick="togglePeek()" title="Preview result" aria-label="Preview result">
-      <svg><use href="/icons.svg#peek"/></svg></button>
     <button class="danger" data-testid="btn-reject" onclick="reject()" title="Reject" aria-label="Reject">
       <svg><use href="/icons.svg#reject"/></svg></button>
     <button class="primary" data-testid="btn-accept" onclick="accept()" title="Accept" aria-label="Accept">
@@ -176,19 +174,23 @@
   </div>
 
   <div class="pill">
-    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
-            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
-    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
-            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
     <button data-testid="btn-pagesetup" aria-pressed="false" onclick="togglePageSetup()"
             title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="/icons.svg#pagesetup"/></svg></button>
     <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
             title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
+    <button data-testid="btn-peek" onclick="togglePeek()"
+            title="Preview result" aria-label="Preview result"><svg><use href="/icons.svg#peek"/></svg></button>
     <button data-testid="btn-reset" onclick="resetFrame()"
             title="Reset to detected" aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
     <button class="counted" data-testid="btn-finalize" onclick="finalize()"
             title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg><span
             class="badge" data-testid="staged-count"></span></button>
+  </div>
+  <div class="pill">
+    <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
+            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
+    <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
+            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
   </div>
 </div>
 
