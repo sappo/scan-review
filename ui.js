@@ -311,12 +311,18 @@ function drawLoupes() {
                  [area.x, area.y + area.h - size]];
 
   const corners = cornersOf(state.frame);
+  const spotOf = i => (i + turn) % 4;                   // where corner i is drawn
   let show;
   if (grab.kind === 'corner') {
-    const screenIx = (grab.ix + turn) % 4;
-    show = [[grab.ix, (screenIx + 2) % 4]];             // opposite the finger
+    // The dragged corner and its two neighbours - which is exactly the set that
+    // MOVES. The opposite corner is the anchor and stays put, so watching it
+    // tells you nothing, and leaving it out frees its screen corner for the
+    // dragged one, which would otherwise sit under your hand.
+    show = [[(grab.ix + 1) % 4, spotOf((grab.ix + 1) % 4)],
+            [(grab.ix + 3) % 4, spotOf((grab.ix + 3) % 4)],
+            [grab.ix, (spotOf(grab.ix) + 2) % 4]];
   } else {
-    show = [0, 1, 2, 3].map(i => [i, (i + turn) % 4]);
+    show = [0, 1, 2, 3].map(i => [i, spotOf(i)]);
   }
 
   const s = baseScale() * state.view.zoom * LOUPE_ZOOM;

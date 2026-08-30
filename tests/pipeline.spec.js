@@ -922,7 +922,7 @@ test('the loupe is actually magnified and carries a crossbar', async ({ page }) 
   await page.mouse.up();
 });
 
-test('resizing a corner shows only that corner, away from the finger',
+test('resizing a corner magnifies it and both neighbours, never the opposite',
   async ({ page }) => {
     await ready(page);
     const r = await page.evaluate(() => {
@@ -933,9 +933,18 @@ test('resizing a corner shows only that corner, away from the finger',
     });
     await beginDrag(page, [r.x, r.y], [r.x + 50, r.y + 50]);
     const loupes = await page.evaluate(() => window.state.loupes);
-    expect(loupes).toHaveLength(1);
-    // Dragging the top-left corner: the loupe sits at the bottom-right.
-    expect(loupes[0].corner).toBe(0);
-    expect(loupes[0].spot).toBe(2);
+
+    // Dragging the top-left (0): show 0, 1 and 3. The opposite corner (2) is
+    // the anchor - it does not move, so there is nothing to watch.
+    expect(loupes).toHaveLength(3);
+    expect(loupes.map(l => l.corner).sort()).toEqual([0, 1, 3]);
+    expect(loupes.map(l => l.corner)).not.toContain(2);
+
+    // Each in its own screen corner, and the dragged one moved across so the
+    // hand is not over it.
+    expect(new Set(loupes.map(l => l.spot)).size).toBe(3);
+    expect(loupes.find(l => l.corner === 0).spot).toBe(2);
+    expect(loupes.find(l => l.corner === 1).spot).toBe(1);
+    expect(loupes.find(l => l.corner === 3).spot).toBe(3);
     await page.mouse.up();
   });

@@ -299,8 +299,10 @@ with a red crossbar dead on the corner, so it can be placed on a paper edge
 exactly rather than by eye. Moving the frame shows all four, pinned to the
 screen corners: the finger is in the middle, so nothing is covered, and the
 top-left loupe showing the top-left corner needs no explaining. Dragging one
-corner shows only that one, moved to the opposite side of the screen so your
-hand is not over it. Their positions are measured from the floating bars at
+corner shows three: that corner and its two neighbours, which is exactly the
+set that moves - the opposite corner is the anchor and stays put, so watching
+it tells you nothing. Leaving it out also frees its screen corner for the
+dragged one, which would otherwise sit under your hand. Their positions are measured from the floating bars at
 draw time, since a loupe tucked under the top bar would be invisible exactly
 when it is wanted. Area beyond the scan is filled with the same amber as the
 main view's out-of-scan hatch, so a corner off the paper reads as "past the
