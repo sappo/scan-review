@@ -70,20 +70,21 @@ def scan(page, angle=0.0, centre=None, feed_gap=140):
     return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
 
 
+# Two batches, because one ADF run is one document. adf-scan names a run's
+# pages BASE-01, BASE-02, ... and that basename is the batch id.
+LETTER = "fx-letter-20260830-120000"
+NOTE = "fx-note-20260830-121500"
+
 FIXTURES = {
-    # A straight-fed A4 whose print is level: the ordinary case.
-    "fx-a4-plain.png": (lambda: scan(sheet((210, 297), 30)), None),
-    # A4 fed straight but PRINTED about 1.2 degrees off, like the real
-    # letter-01. This is the case that text-primary deskew exists for.
-    "fx-a4-crooked-print.png": (lambda: scan(sheet((210, 297), 30, text_angle=1.2)),
-                                None),
-    # A4 fed at an angle, print square to its own sheet.
-    "fx-a4-skewed-feed.png": (lambda: scan(sheet((210, 297), 30), angle=-2.6), "A4"),
-    # A blank landscape A6: no horizontal structure at all, so the content angle
-    # is not measurable and the sheet angle has to stand. The panel hint
-    # deliberately disagrees with detection.
-    "fx-a6-blank.png": (lambda: scan(sheet((148, 105), 0), angle=-7.7,
-                                     centre=(SCAN_W / 2, 700)), "A4"),
+    # A three-page letter: the ordinary case, one printed 1.2 degrees off its
+    # sheet (which is what text-primary deskew exists for), one fed at an angle.
+    f"{LETTER}-01.png": (lambda: scan(sheet((210, 297), 30)), None),
+    f"{LETTER}-02.png": (lambda: scan(sheet((210, 297), 30, text_angle=1.2)), None),
+    f"{LETTER}-03.png": (lambda: scan(sheet((210, 297), 30), angle=-2.6), "A4"),
+    # A separate one-page note. Blank, so the content angle is not measurable
+    # and the sheet angle has to stand; the panel hint disagrees with detection.
+    f"{NOTE}-01.png": (lambda: scan(sheet((148, 105), 0), angle=-7.7,
+                                    centre=(SCAN_W / 2, 700)), "A4"),
 }
 
 

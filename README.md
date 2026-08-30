@@ -83,6 +83,30 @@ degrees in 201 steps, keep the top 100 lines, drop any scoring under half the
 mean - or no confidence at all when the winning cluster holds under half the
 candidates.
 
+## Multi-page documents
+
+**One ADF run is one document.** `adf-scan` writes a run as `BASE-01.png`,
+`BASE-02.png`, ... so the basename is the batch id; the Pi sends it with each
+scan as a `batch` form field, and the backend keeps one staged document per
+batch. Two letters scanned in the same sitting therefore cannot merge into one
+PDF, which they previously did unless you remembered to Send in between.
+
+The Send button carries a badge with the number of pages staged for the current
+batch. Accepting the last page of a batch moves the queue on to the next one,
+whose tray is empty - Send still offers the batch you just finished, because
+that is exactly when you want it.
+
+`finalize` lays out **each page at its own size**, from its pixel dimensions at
+200 dpi. It used to force an A4 layout on every page, so a 148x105mm landscape
+A6 came out as a 210x297mm portrait A4 - throwing away the true size that the
+ratio-locked frame exists to produce. Pages are sorted by page number rather
+than accept order, since stepping back through the queue makes accept order
+unreliable.
+
+The Pi's panel used to pass a constant basename (`a4`, `a6`), so every A4 scan
+was `a4-01.png`: consecutive batches were indistinguishable and the second
+collided with the first. `scanui.py` now passes `a4-<timestamp>`.
+
 ## Known limits
 
 - A4 has almost no horizontal margin: the scanner's usable width is ~211mm versus
@@ -91,12 +115,14 @@ candidates.
 - The frame may extend past the scan and is deliberately NOT clamped. See
   "Review UI" below - clamping cost 3 degrees of residual skew on a real A6.
 - The review UI trusts whoever can reach it, behind HTTP basic auth on the LAN.
-- One document at a time: accepted pages accumulate until "Send".
+- Reordering pages within a document is not possible; they come out in scan
+  order. Removing an accepted page from a staged document is not possible
+  either - reject it before accepting.
 
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 35 geometry / deskew / evaluation units
-    npx playwright test                     # 86 e2e (43 mobile, 43 desktop)
+    npx playwright test                     # 90 e2e (45 mobile, 45 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and

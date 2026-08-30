@@ -35,7 +35,7 @@ const dctx = dial.getContext('2d');
 
 const state = {
   page: null, img: null,
-  pending: [], index: 0,
+  pending: [], index: 0, documents: {}, lastBatch: null,
   // Edits are kept per page id, so stepping away and back does not silently
   // throw away work. Navigation you cannot trust is worse than none.
   edits: {},
@@ -638,6 +638,7 @@ async function accept() {
   if (!r.ok) { say('accept failed', 'var(--err)'); return; }
   const out = await r.json();
   say(`accepted ${out.width}×${out.height}`, 'var(--accent)');
+  state.lastBatch = state.page.batch;
   delete state.edits[state.page.id];
   await load();
 }
@@ -651,10 +652,14 @@ async function reject() {
 }
 
 async function finalize() {
-  const r = await fetch('/api/finalize', { method: 'POST' });
+  const batch = currentBatch();
+  if (!batch) { say('nothing staged', 'var(--err)'); return; }
+  const r = await fetch('/api/finalize/' + encodeURIComponent(batch),
+                        { method: 'POST' });
   if (!r.ok) { say('nothing to send', 'var(--err)'); return; }
   const out = await r.json();
   say(`sent to paperless: ${out.pages} page(s)`, 'var(--accent)');
+  if (state.lastBatch === batch) state.lastBatch = null;
   await load();
 }
 window.accept = accept; window.reject = reject; window.finalize = finalize;
@@ -670,11 +675,40 @@ function captureEdit() {
   };
 }
 
+/** The batch Send would act on.
+ *
+ * The current page's batch, but only if it actually has pages staged.
+ * Accepting the LAST page of a batch moves the queue on to the next one, whose
+ * tray is empty - and then Send would grey out on the batch you had just
+ * finished, which is precisely when you want it.
+ */
+function currentBatch() {
+  const staged = b => b && (state.documents[b] || []).length > 0;
+  const here = state.page && state.page.batch;
+  if (staged(here)) return here;
+  if (staged(state.lastBatch)) return state.lastBatch;
+  const any = Object.keys(state.documents).filter(b => staged(b));
+  return any.length === 1 ? any[0] : (here || null);
+}
+window.currentBatch = currentBatch;
+
+function updateStaged() {
+  const b = currentBatch();
+  const n = (b && state.documents[b] || []).length;
+  q('staged-count').textContent = n ? String(n) : '';
+  q('btn-finalize').disabled = n === 0;
+  q('btn-finalize').title = n
+    ? `Send ${n} page${n === 1 ? '' : 's'} to paperless`
+    : 'Nothing staged yet';
+}
+window.updateStaged = updateStaged;
+
 function updateNav() {
   const n = state.pending.length;
   q('queue-count').textContent = n ? `${state.index + 1}/${n}` : '0/0';
   q('btn-prev').disabled = state.index <= 0;
   q('btn-next').disabled = state.index >= n - 1;
+  updateStaged();
   applyTitleState();
 }
 
@@ -737,6 +771,7 @@ async function load() {
   const r = await fetch('/api/queue');
   const data = await r.json();
   state.pending = data.pending;
+  state.documents = data.documents || {};
   // Clamp rather than reset: after accepting page 3 of 6 you want to be on the
   // page that took its place, not back at the start.
   state.index = Math.max(0, Math.min(state.index, state.pending.length - 1));

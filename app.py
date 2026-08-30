@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import shutil
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -81,6 +82,20 @@ async def require_auth(request: Request, call_next):
 _lock = threading.Lock()
 
 
+# adf-scan writes one run as BASE-01.png, BASE-02.png, ... so the basename IS
+# the batch. Derived here only as a fallback: the Pi sends it explicitly,
+# because the collision rename below can change a filename after the fact.
+PAGE_SUFFIX = re.compile(r"^(?P<batch>.+?)-(?P<page>\d{2,})$")
+
+
+def batch_of(name):
+    """(batch id, page number) for a scan filename."""
+    m = PAGE_SUFFIX.match(Path(name).stem)
+    if m:
+        return m.group("batch"), int(m.group("page"))
+    return Path(name).stem, 1
+
+
 def quad_angle(corners):
     """Rotation of a quad's top edge, in degrees (positive = clockwise)."""
     (x0, y0), (x1, y1) = corners[0], corners[1]
@@ -92,8 +107,14 @@ def quad_angle(corners):
 # --------------------------------------------------------------------------
 def load_state():
     if STATE.exists():
-        return json.loads(STATE.read_text())
-    return {"pages": {}, "document": [], "ingested": []}
+        s = json.loads(STATE.read_text())
+        s.setdefault("documents", {})
+        s.setdefault("pages", {})
+        s.setdefault("ingested", [])
+        return s
+    # `documents` is keyed by batch: one ADF run is one document, so two
+    # letters scanned in the same sitting cannot silently merge into one PDF.
+    return {"pages": {}, "documents": {}, "ingested": []}
 
 
 def save_state(s):
@@ -136,7 +157,18 @@ def ingest_spool(state):
                 hint = json.loads(sidecar.read_text()).get("hint")
             except Exception:
                 hint = None
+        batch, page_no = batch_of(key)
+        side = path.with_suffix(path.suffix + ".json")
+        if side.exists():
+            try:
+                meta = json.loads(side.read_text())
+                batch = meta.get("batch") or batch
+                page_no = int(meta.get("page") or page_no)
+            except Exception:
+                pass
         state["pages"][key] = {
+            "batch": batch,
+            "page_no": page_no,
             "format": suggested,
             "hint": hint,
             # The operator's A4/A6 choice is ADVICE only: it never drives the
@@ -196,12 +228,18 @@ def seed_with_text(img, corners, fmt):
 
 
 def backfill_seeds(state):
-    """Give pages ingested before the frame model a seeded frame.
+    """Fill in fields added after a page was first ingested.
 
-    Recomputed from the FROZEN `detected` corners, so a backfilled seed is
-    identical to one written at ingest - no data is invented.
+    Seeds are recomputed from the FROZEN `detected` corners, so a backfilled
+    seed is identical to one written at ingest - no data is invented. The batch
+    comes from the filename, which is where ingest gets it when the scanner host
+    does not send one.
     """
     changed = False
+    for key, page in state["pages"].items():
+        if not page.get("batch"):
+            page["batch"], page["page_no"] = batch_of(key)
+            changed = True
     for page in state["pages"].values():
         if page.get("seeded") is not None and "text_skew" in page:
             continue
@@ -251,7 +289,7 @@ def queue():
     s, _ = refresh()
     pending = [p for p in s["pages"].values() if p["status"] == "pending"]
     pending.sort(key=lambda p: p["id"])
-    return {"pending": pending, "document": s["document"]}
+    return {"pending": pending, "documents": s["documents"]}
 
 
 @app.get("/api/image/{page_id}")
@@ -324,7 +362,7 @@ def accept(page_id: str, body: AcceptBody):
                 None if hint is None else hint == accepted_frame.get("format"))
         (TRUTH / f"{page_id}.json").write_text(json.dumps(record, indent=2))
 
-        s["document"].append(page_id)
+        s["documents"].setdefault(page["batch"], []).append(page_id)
         save_state(s)
         return {"ok": True, "output": str(dest), "target": result.target,
                 "width": int(out_img.shape[1]), "height": int(out_img.shape[0])}
@@ -363,7 +401,8 @@ def preview(page_id: str, body: PreviewBody):
 
 
 @app.post("/api/ingest")
-async def ingest(file: UploadFile = File(...), hint: str = Form("")):
+async def ingest(file: UploadFile = File(...), hint: str = Form(""),
+                 batch: str = Form(""), page: str = Form("")):
     """Accept a scan pushed by the scanner host.
 
     Push rather than pull: the Pi authenticates to us (we already require auth),
@@ -399,8 +438,9 @@ async def ingest(file: UploadFile = File(...), hint: str = Form("")):
         stem, suffix = Path(name).stem, Path(name).suffix
         dest = SPOOL / f"{stem}-{digest[:8]}{suffix}"
     dest.write_bytes(data)
-    if hint:
-        dest.with_suffix(dest.suffix + ".json").write_text(json.dumps({"hint": hint}))
+    meta = {k: v for k, v in (("hint", hint), ("batch", batch), ("page", page)) if v}
+    if meta:
+        dest.with_suffix(dest.suffix + ".json").write_text(json.dumps(meta))
     refresh()
     return {"ok": True, "stored": dest.name, "bytes": len(data), "sha256": digest,
             "hint": hint or None, "duplicate": False}
@@ -423,33 +463,47 @@ def reject(page_id: str):
         return {"ok": True}
 
 
-@app.post("/api/finalize")
-def finalize():
-    """Assemble accepted pages into one PDF and deliver it to the paperless mock."""
+@app.post("/api/finalize/{batch}")
+def finalize(batch: str):
+    """Assemble one batch's accepted pages into a PDF and deliver it.
+
+    One ADF run is one document. Previously every accepted page went into a
+    single tray and Send emptied it, so two letters scanned in the same sitting
+    merged into one PDF unless the operator remembered to Send in between.
+    """
     with _lock:
         s = load_state()
-        ids = list(s["document"])
+        # Ignore ids whose page has since gone: a dangling reference should not
+        # turn the whole batch into a 500.
+        ids = [i for i in (s["documents"].get(batch) or [])
+               if s["pages"].get(i, {}).get("output")]
         if not ids:
-            raise HTTPException(400, "no accepted pages")
+            raise HTTPException(404, f"no accepted pages in batch {batch!r}")
+        # Pages of a run come off the ADF in order; accept order can differ if
+        # the operator stepped back through the queue.
+        ids.sort(key=lambda i: s["pages"][i].get("page_no", 0))
         images = [s["pages"][i]["output"] for i in ids]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         pdf_path = OUT / f"document-{stamp}.pdf"
-        layout = img2pdf.get_layout_fun(
-            (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297)))
+        # Each page at ITS OWN size, from its pixel dimensions at the scan dpi.
+        # A fixed A4 layout put a 148x105mm A6 onto a 210x297mm portrait page,
+        # throwing away the true size the ratio-locked frame exists to produce.
+        layout = img2pdf.get_fixed_dpi_layout_fun((DPI, DPI))
         pdf_path.write_bytes(img2pdf.convert(images, layout_fun=layout))
 
         delivered = CONSUME / pdf_path.name
         shutil.copy2(pdf_path, delivered)
 
         log = json.loads(DELIVERY_LOG.read_text()) if DELIVERY_LOG.exists() else []
-        log.append({"file": delivered.name, "pages": len(ids), "page_ids": ids,
-                    "bytes": delivered.stat().st_size,
+        log.append({"file": delivered.name, "batch": batch, "pages": len(ids),
+                    "page_ids": ids, "bytes": delivered.stat().st_size,
                     "at": datetime.now(timezone.utc).isoformat()})
         DELIVERY_LOG.write_text(json.dumps(log, indent=2))
 
-        s["document"] = []
+        s["documents"].pop(batch, None)
         save_state(s)
-        return {"ok": True, "pdf": delivered.name, "pages": len(ids)}
+        return {"ok": True, "pdf": delivered.name, "batch": batch,
+                "pages": len(ids)}
 
 
 @app.get("/api/deliveries")

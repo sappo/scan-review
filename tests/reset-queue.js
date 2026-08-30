@@ -47,7 +47,7 @@ function reset() {
         s.ingested = s.ingested.filter(k => k !== id);
       }
     }
-    s.document = [];
+    s.documents = {};      // one staged document per ADF batch
     fs.writeFileSync(STATE, JSON.stringify(s, null, 2));
   }
   for (const dir of [TRUTH, CONSUME]) {

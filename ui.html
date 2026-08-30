@@ -76,6 +76,14 @@
   button.danger { color:#ffb4ad; }
   button.text { width:auto; min-width:44px; padding:0 14px; font-size:15px;
                 font-weight:600; letter-spacing:.02em; }
+  /* How many pages are staged for this batch's PDF. Without it you cannot tell
+     what Send is about to produce until it has produced it. */
+  button.counted { position:relative; }
+  .badge { position:absolute; top:1px; right:1px; min-width:18px; height:18px;
+           padding:0 4px; border-radius:9px; background:var(--accent);
+           color:#06121f; font-size:11px; font-weight:700; line-height:18px;
+           text-align:center; }
+  .badge:empty { display:none; }
   button:disabled { opacity:.35; }
 
   #dialwrap { pointer-events:auto; background:var(--float); border-radius:26px;
@@ -178,8 +186,9 @@
             title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
     <button data-testid="btn-reset" onclick="resetFrame()"
             title="Reset to detected" aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
-    <button data-testid="btn-finalize" onclick="finalize()"
-            title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg></button>
+    <button class="counted" data-testid="btn-finalize" onclick="finalize()"
+            title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg><span
+            class="badge" data-testid="staged-count"></span></button>
   </div>
 </div>
 

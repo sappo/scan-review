@@ -379,6 +379,7 @@ test('finalize delivers a PDF to the paperless mock', async ({ page }) => {
   await ready(page);
   await page.getByTestId('btn-accept').click();
   await expect(page.getByTestId('status')).toContainText('accepted');
+  await expect(page.getByTestId('staged-count')).toHaveText('1');
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('paperless');
   const { execSync } = require('child_process');
@@ -410,7 +411,11 @@ test('buttons are icon-only, apart from the format chips', async ({ page }) => {
   const labelled = await page.evaluate(() =>
     [...document.querySelectorAll('button')]
       .filter(b => b.offsetParent !== null)
-      .map(b => ({ id: b.dataset.testid, text: b.textContent.trim(),
+      .map(b => ({ id: b.dataset.testid,
+                   // The staged badge is a count indicator, not a label.
+                   text: [...b.childNodes].filter(n => !n.classList ||
+                          !n.classList.contains('badge'))
+                          .map(n => n.textContent).join('').trim(),
                    svg: !!b.querySelector('svg'),
                    aria: b.getAttribute('aria-label') })));
   for (const b of labelled) {
@@ -702,3 +707,63 @@ test('ingest measures the content angle and levels the frame to it',
     // At least one real scan should actually be measurable.
     expect(withText.some(p => p.text_skew.confident)).toBe(true);
   });
+
+/** Accept every page of whichever batch the queue starts on. */
+async function acceptWholeBatch(page) {
+  const batch = await page.evaluate(() => window.state.page.batch);
+  let n = 0;
+  for (;;) {
+    const here = await page.evaluate(() => window.state.page && window.state.page.batch);
+    if (here !== batch) break;
+    await page.getByTestId('btn-accept').click();
+    await expect(page.getByTestId('status')).toContainText('accepted');
+    n++;
+    if (await page.evaluate(() => !window.state.page)) break;
+  }
+  return { batch, n };
+}
+
+test('one ADF batch is one document, and Send is scoped to it', async ({ page, request }) => {
+  await ready(page);
+  const { batch, n } = await acceptWholeBatch(page);
+  expect(n).toBeGreaterThan(0);
+
+  // The queue has moved on to a different batch, whose tray is empty - Send
+  // must still offer the batch that was just finished.
+  const docs = await (await request.get('/api/queue')).json();
+  expect(docs.documents[batch]).toHaveLength(n);
+  await expect(page.getByTestId('btn-finalize')).toBeEnabled();
+  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
+
+  await page.getByTestId('btn-finalize').click();
+  await expect(page.getByTestId('status')).toContainText('paperless');
+  const after = await (await request.get('/api/queue')).json();
+  expect(after.documents[batch]).toBeUndefined();
+});
+
+test('each page goes into the PDF at its own true size', async ({ request }) => {
+  const { execSync } = require('child_process');
+  const { pending } = await (await request.get('/api/queue')).json();
+  // The blank A6 note is a batch of one, and landscape - the case a fixed A4
+  // layout silently destroyed.
+  const note = pending.find(p => p.seeded && p.seeded.format === 'A6');
+  expect(note).toBeTruthy();
+  const corners = (f) => {
+    const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+      .map(([x, y]) => [f.cx + x * ca - y * sa, f.cy + x * sa + y * ca]);
+  };
+  await request.post(`/api/accept/${encodeURIComponent(note.id)}`, {
+    data: { corners: corners(note.seeded), frame: note.seeded, rotation: 0,
+            target: note.seeded.format } });
+  const fin = await (await request.post(
+    `/api/finalize/${encodeURIComponent(note.batch)}`)).json();
+  const pdf = path.join(__dirname, '..', 'mock-paperless', 'consume', fin.pdf);
+  const info = execSync(`pdfinfo -f 1 -l 1 ${pdf}`).toString();
+  const m = info.match(/Page\s+1 size:\s+([\d.]+) x ([\d.]+) pts/);
+  const [w, h] = [Number(m[1]), Number(m[2])];
+  // A6 landscape is 148 x 105 mm = 419.5 x 297.6 pts. NOT 595 x 842 (A4).
+  expect(w / 72 * 25.4).toBeCloseTo(148, 0);
+  expect(h / 72 * 25.4).toBeCloseTo(105, 0);
+});
