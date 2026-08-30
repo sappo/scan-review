@@ -14,10 +14,10 @@ so they never appear in `ps` or in the unit file.
 ## How it flows
 
     Pi (adf-scan, FULL size)
-      └─ fetch_scans.py  ──pull, sha256-verified──> spool/
-           └─ auto-detect the sheet (corners + skew)
-                └─ REVIEW at http://127.0.0.1:8765   ← drag corners, Accept / Reject / Rotate
-                     └─ "Send to paperless"
+      └─ push_scans.py  ──POST /api/ingest, sha256-acked──> spool/
+           └─ auto-detect the sheet, then seed a ratio-locked frame
+                └─ REVIEW on the phone   ← crop, straighten, Accept / Reject
+                     └─ "Send"
                           └─ out/document-*.pdf  and  mock-paperless/consume/*.pdf
                                └─ mock-paperless/deliveries.json  (proof of delivery)
 
@@ -50,28 +50,45 @@ them, then takes the largest contour's minimum-area rectangle as the quad.
 
 - A4 has almost no horizontal margin: the scanner's usable width is ~211mm versus
   A4's 210mm. Deskewing a full-width A4 therefore has nowhere to rotate into and
-  will clip edges. A6 and smaller have plenty of margin. `warp.py` reports
-  `clamped=True` when the crop touches the scan boundary and the UI flags it.
-- The review UI trusts whoever can reach localhost. Scans contain personal data,
-  so keep it bound to 127.0.0.1.
-- One document at a time: accepted pages accumulate until "Send to paperless".
+  will clip edges. A6 and smaller have plenty of margin.
+- The frame may extend past the scan and is deliberately NOT clamped. See
+  "Review UI" below - clamping cost 3 degrees of residual skew on a real A6.
+- The review UI trusts whoever can reach it, behind HTTP basic auth on the LAN.
+- One document at a time: accepted pages accumulate until "Send".
 
 ## Tests
 
-    npx playwright test        # 6 end-to-end tests against the running service
+    ./.venv/bin/python -m pytest tests/     # 19 geometry / evaluation units
+    npx playwright test                     # 40 e2e (20 mobile, 20 desktop)
 
-They assert on outcomes — queue counts, files on disk, output pixel dimensions,
-`qpdf --show-npages`, the delivery log — not on whether the page rendered. The
-drag test was mutation-checked: disabling the drag handler makes it fail.
+The Python suite covers `frame.py` and `evaluate.py` without a browser or a
+running server: the ratio table, the seed fit against the real 1663x2328 A4 and
+the skewed A6, the frame/corners round-trip, and the error decomposition.
+
+The Playwright suite runs against the live service in two viewports, `Pixel 7`
+and 1280x1000. It asserts on outcomes - accepted pixel dimensions, painted
+pixels, files on disk, `qpdf --show-npages` - not on whether something rendered.
+
+Two properties would pass against a broken implementation, so both were
+mutation-tested: breaking the ratio lock (`nh = nw * ratio * 1.05`) fails at the
+ratio assertion, and breaking the resize anchor fails at the anchor assertion
+and NOT at the ratio one, confirming the two assert different things.
+
+`workers` is pinned to 1 and the queue is reset before every test. The tests
+share one single-process server and one `state.json`, so parallel workers race
+each other - the same constraint that forbids `uvicorn --workers N`.
 
 ## Layout
 
     detect.py         find the sheet (corners, skew, coverage)
-    warp.py           deskew/crop; flags crops that touch the scan edge
+    frame.py          the ratio-locked crop: seed fit, frame <-> corners, error
+    warp.py           deskew/crop at a true ISO size
     app.py            queue, accept/reject, PDF assembly, mock delivery
-    ui.html           review UI (canvas, draggable corners)
-    fetch_scans.py    pull scans from the Pi, checksum-verified, no duplicates
-    originals/        untouched copies of your two sheets
+    ui.html           review UI markup and styles
+    ui.js             frame geometry, gestures, canvas rendering
+    evaluate.py       how far the detector is off, per axis
+    fetch_scans.py    pull scans from the Pi, checksum-verified
+    originals/        untouched copies of the reference sheets
     spool-archive/    other scans pulled from the Pi, kept out of the queue
 
 ## Post-implementation review (self-audit)
@@ -93,12 +110,14 @@ Checked, with results:
   interleave two accepts and lose one. The systemd unit omits `--workers`; both
   the unit and app.py say why.
 
-Not addressed, deliberately:
+Two of these are now moot: corner ordering and the crossed-quad risk both
+disappeared with the ratio-locked frame, which cannot express a bow-tie. The
+concurrency note still stands and is why `workers` is pinned to 1 in the
+Playwright config as well as in the systemd unit.
 
-- A user can drag corners into a crossed quad and get a mangled crop. The UI draws
-  the quad live, so this is visible before accepting rather than silent.
-- No auth on the review UI. It binds 127.0.0.1 only; scans hold personal data, so
-  do not expose it beyond localhost without adding auth.
+Superseded: an earlier version of this file said the UI has no auth and binds
+127.0.0.1 only. It binds 0.0.0.0 behind HTTP basic auth, LAN-scoped by an
+nftables rule - see "Network access".
 
 ## Network access
 
@@ -121,54 +140,99 @@ internet. The LAN-scoped rule is the safer equivalent.
 
 ## Review UI
 
-Two panes: the **source** with the detected quad, and a **live preview** of exactly what Accept will produce - the deskewed, cropped page.
-The preview is rendered by the same code path as Accept, so what you see is what
-you get.
+Mobile first - most review happens on a phone. One full-bleed canvas, controls
+docked at the bottom within thumb reach; above 900px the bottom panel becomes a
+right-hand rail and the canvas takes the rest.
 
-- **Corners** - drag any handle. Handles for corners that fall OUTSIDE the scan
-  stay reachable in the margin around the image.
-- **Sides** - drag an edge to crop that side in or out. The edge moves along its
-  own normal, so it stays parallel and the opposite side does not move. The side
-  under the pointer is highlighted. Corners take priority where they overlap.
-- **Page size** - pick A4/A5/A6 and the output is rendered at that exact ISO size,
-  so the aspect ratio is the true paper ratio no matter how the quad is dragged.
-  `free` uses the quad's own measured size.
-- **Deskew** - a slider from -15 to +15 degrees rotates the whole quad about its
-  centre, with +/-0.1 degree buttons for fine work. The slider is absolute and
-  applies only the delta, so `corners` stays authoritative and dragging a handle
-  afterwards still behaves. A whole slider gesture is one undo step.
-- **Gridlines** over the preview (toggleable, on by default): a light grid plus a
-  stronger red centre cross, so "is this level?" is judged against a reference
-  rather than by eye. They redraw whenever the preview updates.
-- **Undo** reverts any change (drag, nudge, rotate, format). **Reset to detected**
-  returns to the automatic result.
+**The crop is a ratio-locked rectangle**, not four free corners. Pages arrive
+from a sheet-fed ADF, not a handheld camera, so there is no perspective
+distortion to correct - a page is a rectangle of known ISO ratio, rotated by the
+feed skew. Free corner dragging only offered ways to produce a crop no real
+sheet could have. Internally the crop is `{cx, cy, w, h, angle}` with `h/w`
+pinned by the format, so a sheared or bow-tie quad is not expressible. Corners
+are derived when the server is called, which is why `warp.py` and the
+accept/preview API needed no changes.
 
-Corners may lie OUTSIDE the scan when a sheet was fed flush to the leading edge.
-The canvas keeps a margin around the image so those handles stay grabbable, and
-the transform does not clamp them - clamping deformed the quad and left about 3
-degrees of residual skew on a real A6. The missing sliver is filled white and the
-UI says so.
+**The frame stays upright; the scan tilts under it.** The canvas rotates the
+image by `-angle` and draws the frame axis-aligned. Level is then judged against
+the screen edges and the raster rather than against a tilted box, which is what
+makes the straighten dial legible - and it collapses hit-testing to
+point-in-rectangle.
+
+Two modes:
+
+- **Crop** - white corner brackets and edge midpoint ticks, everything outside
+  the frame dimmed.
+- **Straighten** - a tick dial spanning the full width. It reads **0 at the
+  detected angle**, so it shows the manual correction on top of detection;
+  +/-0.1 degree buttons for fine work. A whole drag is one undo step.
+
+Gestures:
+
+- One finger in the **grab band** hugging the border resizes, holding the ratio
+  and anchoring the opposite corner or edge. Corners win where they overlap an
+  edge. The band is `min(24px, a quarter of the frame's smaller screen
+  dimension)` - a fixed band would swallow a small frame's interior and leave
+  nothing to grab for moving.
+- One finger in the **interior core** moves the whole frame.
+- One finger **outside the frame does nothing**, so steadying the phone at the
+  edge of the screen cannot nudge a crop that was already settled.
+- **Two fingers** pan and zoom the view (1x to 8x) and never touch the frame.
+
+**Gridlines** - a blue grid plus a stronger red centre cross, clipped to the
+frame and therefore aligned to the output. On its own canvas layer, toggleable.
+
+**Peek** flips to the warped result full-screen, rendered by the same endpoint
+Accept uses.
+
+**Format** picks A4/A5/A6 and the output is rendered at that exact ISO size.
+Ratios come from `PAPER_MM`, not from sqrt(2): the ISO sizes are whole
+millimetres, so A4 (1.414286), A5 (1.418919) and A6 (1.409524) genuinely differ.
+**Swap orientation** transposes the frame; **Rotate 90** is a different control,
+cycling the output rotation applied after warp for a sheet fed upside down.
+
+**The frame may lie outside the scan, and is never clamped.** A sheet fed flush
+to the leading edge genuinely has a corner beyond the captured area; clamping it
+deformed the quad and left 3 degrees of residual skew on a real A6. That region
+is hatched on the canvas, warned about, and filled white in the output.
 
 ## Ground truth: measuring the detector
 
-The deskew/crop detector is refined against measured error, not guesswork.
+Every accept writes `groundtruth/<page>.json`, schema 2:
 
-Every accept writes `groundtruth/<page>.json` pairing what the detector PROPOSED
-with what you ACCEPTED:
+    detected   the detector's raw quad, frozen at ingest
+    seeded     the ratio-locked frame the operator was actually SHOWN
+    accepted   the frame they approved
+    error      centre / scale / angle / format / orientation, decomposed
 
-    detected  { corners, angle, format }   frozen at ingest
-    accepted  { corners, angle, format, rotation }
-    hint                                    what you chose on the Pi panel
-    corner_shift_px                         how far you moved things
+Three geometries, not two. `seeded` is stored rather than recomputed so a later
+change to the seed fit cannot silently make old records uncomparable. The error
+compares **seeded to accepted**, because that is the frame that was on screen.
 
-Accepts you did not change are recorded too - agreement is evidence that the
-detector was right, and a dataset of only corrections would be biased.
+The decomposition is the point. A ratio-locked frame has five degrees of freedom
+and each indicts a different part of the detector:
+
+    centre        the paper mask's centroid - backing/padding thresholds
+    scale         mask erosion or dilation - the morphology kernel sizes
+    angle         minAreaRect skew
+    format        classify() and its tolerance
+
+The old single `corner_shift_px` blended all of these into one number that said
+a scan was wrong but not how, so it is gone.
+
+The seed fit runs on the SERVER, at ingest, and is frozen. If the browser
+computed it, a stale client could report a starting frame it never displayed and
+the dataset would overstate how often the detector was right.
+
+Accepts you did not change are recorded too - agreement is evidence, and a
+corpus of only corrections would be biased. `unchanged` means centre within 1px,
+scale within 0.2%, angle within 0.05 degrees, same format and orientation.
 
     ./.venv/bin/python evaluate.py            # summary + worst cases
     ./.venv/bin/python evaluate.py --verbose
 
-It reports format agreement, how often detection matched your panel hint, skew
-error statistics, and a per-scan table so a bad case can be found and inspected.
+It refuses any record whose schema it does not recognise rather than misreading
+a pre-frame record as if the fields matched.
 
 ## The panel choice is ADVICE, not geometry
 
