@@ -1,4 +1,9 @@
 const { test, expect } = require('@playwright/test');
+const reset = require('./reset-queue');
+
+// Every test starts from the same queue. Without this the second project finds
+// an empty queue - the first one consumed it - and tests depend on run order.
+test.beforeEach(() => reset());
 
 test('queue seeds a ratio-locked frame for every pending page', async ({ request }) => {
   const r = await request.get('/api/queue');

@@ -39,11 +39,16 @@
   .flag { color:var(--warn); font-size:13px; text-align:center; margin:4px 0 0; }
   .flag[hidden] { display:none; }
   #status { text-align:center; font-size:13px; min-height:18px; color:var(--dim); }
+  /* Grid, not flex-wrap. #stage's only child is an absolutely-positioned
+     canvas, so its flex-basis resolves to 0 - which means it always FITS in
+     whatever space is left on the header's line and never wraps, ending up
+     zero-wide with the canvas at width 0 and every frame coordinate negative.
+     A grid states the two columns outright and cannot do that. */
   @media (min-width:900px) {
-    body { flex-direction:row; flex-wrap:wrap; }
-    #top { width:100%; }
-    #stage { flex:1; }
-    #bottom { width:320px; border-top:0; border-left:1px solid var(--line); }
+    body { display:grid; grid-template-columns:1fr 320px; grid-template-rows:auto 1fr; }
+    #top { grid-column:1 / -1; }
+    #stage { min-width:0; min-height:0; }
+    #bottom { border-top:0; border-left:1px solid var(--line); overflow-y:auto; }
   }
 </style>
 

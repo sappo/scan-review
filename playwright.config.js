@@ -16,6 +16,11 @@ module.exports = {
   // Tests accept and reject pages, which consumes the queue. Without this the
   // suite passes once and then fails for want of pending pages.
   globalSetup: require.resolve('./tests/reset-queue.js'),
+  // One worker, always. The tests share one single-process server and one
+  // state.json; parallel workers race each other's queue resets. This is the
+  // same constraint that forbids `uvicorn --workers N`.
+  workers: 1,
+  fullyParallel: false,
   timeout: 30000,
   use: base,
   projects: [
