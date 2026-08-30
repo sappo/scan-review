@@ -462,6 +462,28 @@ def reject(page_id: str):
         return {"ok": True}
 
 
+@app.post("/api/reopen/{page_id}")
+def reopen(page_id: str):
+    """Put a decided page back in play.
+
+    Deciding is reversible right up until the document is sent - that is what
+    makes the last look before Send worth having, and it is the way back from a
+    mis-tap. Sending is not: the PDF has been delivered.
+    """
+    with _lock:
+        s = load_state()
+        page = s["pages"].get(page_id)
+        if not page:
+            raise HTTPException(404, "unknown page")
+        if page["status"] == "sent":
+            raise HTTPException(409, "already sent")
+        page["status"] = "pending"
+        for key in ("output", "out_width", "out_height", "outside"):
+            page.pop(key, None)
+        save_state(s)
+        return {"ok": True, "status": "pending"}
+
+
 @app.post("/api/finalize/{batch}")
 def finalize(batch: str):
     """Assemble one batch's accepted pages into a PDF and deliver it.

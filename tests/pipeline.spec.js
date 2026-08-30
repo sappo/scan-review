@@ -971,3 +971,53 @@ test('resizing a corner magnifies it and both neighbours, never the opposite',
     expect(loupes.find(l => l.corner === 3).spot).toBe(3);
     await page.mouse.up();
   });
+
+test('a decided page can be reopened until it is sent', async ({ request }) => {
+  // From a multi-page document: rejecting the only page of a single-page one
+  // empties the document, which then leaves the queue and takes the page's
+  // reopen path with it. See "Known limits" in the README.
+  const { documents } = await (await request.get('/api/queue')).json();
+  const doc = documents.find(d => d.counts.total > 1);
+  const p = doc.pages.find(x => x.status === 'pending');
+  await request.post(`/api/reject/${encodeURIComponent(p.id)}`);
+  let after = (await allPages(request)).find(x => x.id === p.id);
+  expect(after.status).toBe('rejected');
+
+  const r = await request.post(`/api/reopen/${encodeURIComponent(p.id)}`);
+  expect(r.ok()).toBeTruthy();
+  after = (await allPages(request)).find(x => x.id === p.id);
+  expect(after.status).toBe('pending');
+});
+
+test('reopening an unknown page is a 404', async ({ request }) => {
+  const r = await request.post('/api/reopen/nope.png');
+  expect(r.status()).toBe(404);
+});
+
+test('a sent page cannot be reopened, and finalize needs a decided document',
+  async ({ request }) => {
+    const { documents } = await (await request.get('/api/queue')).json();
+    const doc = documents.find(d => d.counts.total > 1) || documents[0];
+
+    const early = await request.post(`/api/finalize/${encodeURIComponent(doc.batch)}`);
+    expect(early.status()).toBe(409);
+
+    const corners = (f) => {
+      const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+        .map(([x, y]) => [f.cx + x * ca - y * sa, f.cy + x * sa + y * ca]);
+    };
+    for (const p of doc.pages) {
+      await request.post(`/api/accept/${encodeURIComponent(p.id)}`, {
+        data: { corners: corners(p.seeded), frame: p.seeded, rotation: 0,
+                target: p.seeded.format } });
+    }
+    const fin = await request.post(`/api/finalize/${encodeURIComponent(doc.batch)}`);
+    expect(fin.ok()).toBeTruthy();
+
+    const after = await (await request.get('/api/queue')).json();
+    expect(after.documents.find(d => d.batch === doc.batch)).toBeUndefined();
+    const r = await request.post(`/api/reopen/${encodeURIComponent(doc.pages[0].id)}`);
+    expect(r.status()).toBe(409);
+  });
