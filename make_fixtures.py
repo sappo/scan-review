@@ -27,8 +27,12 @@ BACKING, PAPER = 125, 240
 rng = np.random.default_rng(7)
 
 
+# Flat regions, no per-pixel noise. Noise everywhere made a fixture a 5.5MB PNG
+# - random pixels do not compress - and every UI test downloads and decodes one.
+# It buys nothing: detect.py separates padding from backing by row MEAN
+# (>254.5) as well as row std, and the backing's 125 already fails that test.
 def _noise(shape, level):
-    return rng.normal(0.0, level, shape)
+    return np.zeros(shape)
 
 
 def sheet(mm, lines, text_angle=0.0, margin=0.12):

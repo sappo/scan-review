@@ -50,12 +50,21 @@ function reset() {
   if (fs.existsSync(STATE)) {
     const s = JSON.parse(fs.readFileSync(STATE, 'utf8'));
     for (const [id, page] of Object.entries(s.pages)) {
-      // Drop anything consumed so it re-ingests, and anything whose spool file
-      // is gone so a stale entry cannot 410 the whole suite.
-      if (page.status !== 'pending' || !fs.existsSync(page.source)) {
+      if (!fs.existsSync(page.source)) {
+        // Deleted documents have their scans moved to spool-archive. Drop the
+        // entry so it re-ingests once ensureFixtures puts the file back.
         delete s.pages[id];
         s.ingested = s.ingested.filter(k => k !== id);
+        continue;
       }
+      // Restore in place rather than deleting and re-ingesting. Re-ingest costs
+      // ~195ms of detection and deskew per page, and it reassigns ingest order,
+      // which is what documents are sorted by - so document order shifted
+      // between runs and tests that searched positionally landed elsewhere.
+      // `detected` and `seeded` are frozen at ingest, so keeping them is also
+      // more faithful than regenerating them.
+      page.status = 'pending';
+      for (const k of ['output', 'out_width', 'out_height', 'outside']) delete page[k];
     }
     delete s.documents;    // removed: staged membership is a page status now
     fs.writeFileSync(STATE, JSON.stringify(s, null, 2));
