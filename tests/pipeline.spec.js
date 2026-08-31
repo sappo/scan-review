@@ -1176,7 +1176,12 @@ test('accepting a page advances to the next undecided one in the document',
     expect(doc.pages.length).toBeGreaterThan(1);
     const before = await page.evaluate(() => window.currentPage().id);
     await page.getByTestId('btn-accept').click();
-    await expect(page.getByTestId('status')).toContainText('accepted');
+    // The status text is set BEFORE accept() reloads and re-renders, so it is
+    // not a barrier - waiting on it and then reading state is a race. The
+    // filmstrip's current marker moves only once showPage() has finished.
+    await expect(page.locator('#filmstrip .film[aria-current=true]'))
+      .toHaveAttribute('data-testid', 'film-1');
+
     const after = await page.evaluate(() => window.currentPage().id);
     expect(after).not.toBe(before);
     expect(await page.evaluate(() => window.currentPage().status)).toBe('pending');
@@ -1211,8 +1216,10 @@ test('Send becomes Delete when every page is declined', async ({ page }) => {
   const batch = await page.evaluate(() => window.currentDoc().batch);
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('deleted');
-  expect(await page.evaluate(
-    () => window.state.documents.map(d => d.batch))).not.toContain(batch);
+  // Same race as above: the status is set before the reload finishes, so wait
+  // for the document list itself to lose the batch.
+  await page.waitForFunction(
+    (b) => !window.state.documents.some(d => d.batch === b), batch);
 });
 
 test('filmstrip tiles are page-shaped, not the generic round buttons',
