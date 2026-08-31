@@ -408,9 +408,10 @@ test('pushing the frame past the scan edge warns but still accepts', async ({ pa
 
 test('finalize delivers a PDF to the paperless mock', async ({ page }) => {
   await ready(page);
+  await gotoDoc(page, 'fx-letter');
   // Send needs every page decided: one run is one document.
   const n = await decideAll(page);
-  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
+  await expect(page.getByTestId('page-count')).toHaveText(String(n));
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('paperless');
   const { execSync } = require('child_process');
@@ -561,24 +562,43 @@ test('the frame is visible and draggable in straighten mode too', async ({ page 
 test('dragging moves the frame by the damped distance, not a compounding one',
   async ({ page }) => {
     await ready(page);
-    const before = await frameOf(page);
+    const box = await page.getByTestId('canvas').boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+
+    // Cross the activation threshold FIRST, then measure. Including the
+    // threshold in the sum made the expectation depend on exactly which move
+    // event crossed it, which changes with the image and the step size.
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 30, cy, { steps: 6 });
+    const armed = await frameOf(page);
+
     const { s, dpr, gain } = await page.evaluate(() => {
       const cv = document.getElementById('cv');
       return { s: Math.min((cv.width - 40) / window.state.img.naturalWidth,
                            (cv.height - 40) / window.state.img.naturalHeight),
                dpr: window.devicePixelRatio || 1, gain: window.moveGain() };
     });
-    const box = await page.getByTestId('canvas').boundingBox();
-    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+
     // Many small steps: the old handler measured each delta against an origin
     // it had just moved, so movement grew with the NUMBER of pointer events.
-    await page.mouse.move(cx, cy); await page.mouse.down();
-    for (let i = 1; i <= 20; i++) await page.mouse.move(cx + i * 5, cy);
+    for (let i = 1; i <= 8; i++) await page.mouse.move(cx + 30 + i * 5, cy);
+    const half = await frameOf(page);
+    for (let i = 9; i <= 16; i++) await page.mouse.move(cx + 30 + i * 5, cy);
     await page.mouse.up();
     const after = await frameOf(page);
-    // 100 CSS px of travel, less the 10px activation threshold.
-    const expected = ((100 - 10) * dpr / s) * gain;
-    expect(after.cx - before.cx).toBeCloseTo(expected, 0);
+
+    const first = half.cx - armed.cx, second = after.cx - half.cx;
+    // Linear: two equal drags move the frame equally. Compounding made the
+    // second far larger than the first.
+    expect(second / first).toBeCloseTo(1, 1);
+
+    // Damped by the expected factor. Compared as a ratio with a 5% tolerance
+    // rather than to the pixel: cv.width is rounded from clientWidth * dpr, so
+    // recomputing the scale here agrees only to about a percent. The failures
+    // this guards against are 855% (compounding) and 233% (no damping).
+    const expected = (80 * dpr / s) * gain;
+    expect((after.cx - armed.cx) / expected).toBeCloseTo(1, 1);
   });
 
 test('the title pill matches the height of the buttons beside it', async ({ page }) => {
@@ -755,7 +775,7 @@ async function acceptWholeBatch(page) {
 
 test('one ADF batch is one document, and Send is scoped to it', async ({ page, request }) => {
   await ready(page);
-  const batch = await page.evaluate(() => window.currentDoc().batch);
+  const batch = (await gotoDoc(page, 'fx-letter')).batch;
   const n = await decideAll(page);
   expect(n).toBeGreaterThan(0);
 
@@ -765,7 +785,7 @@ test('one ADF batch is one document, and Send is scoped to it', async ({ page, r
   expect(doc.counts.accepted).toBe(n);
   expect(doc.ready).toBe(true);
   await expect(page.getByTestId('btn-finalize')).toBeEnabled();
-  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
+  await expect(page.getByTestId('page-count')).toHaveText(String(n));
 
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('paperless');
@@ -832,7 +852,7 @@ test('the top bar stays on one row at common phone widths', async ({ page }, tes
     });
     expect(bottom.btnRows, `toolbar wrapped at ${width}px`).toBe(1);
     expect(bottom.overflow, `toolbar overflowed at ${width}px`).toBe(false);
-    expect(bottom.buttons).toBe(7);
+    expect(bottom.buttons).toBe(8);
     expect(bottom.visibleBars, `two toolbars visible at ${width}px`).toBe(1);
     await expect(page.getByTestId('toolbar-sep')).toBeVisible();
   }
@@ -889,6 +909,24 @@ test('a tap on the dial that moves nothing does not enable undo', async ({ page 
   await page.mouse.move(x + 4, y); await page.mouse.up();
   await expect(page.getByTestId('btn-undo')).toBeEnabled();
 });
+
+/** Navigate to a named fixture document.
+ *
+ * Not "the first document with more than one page": reset() re-ingests consumed
+ * pages, so ingest order - and therefore document order - differs between runs,
+ * and a positional search lands somewhere different each time.
+ */
+async function gotoDoc(page, prefix) {
+  const i = await page.evaluate(
+    (p) => window.state.documents.findIndex(d => d.batch.startsWith(p)), prefix);
+  expect(i, `no document matching ${prefix}`).toBeGreaterThanOrEqual(0);
+  await page.evaluate(async (k) => {
+    window.state.docIndex = k;
+    window.state.pageIndex = 0;
+    await window.showPage();
+  }, i);
+  return page.evaluate(() => window.currentDoc());
+}
 
 /** Decide every page of the current document.
  *
@@ -1134,11 +1172,8 @@ test('the chevrons step documents, not pages', async ({ page }) => {
 test('accepting a page advances to the next undecided one in the document',
   async ({ page }) => {
     await ready(page);
-    const total = await page.evaluate(() => window.state.documents.length);
-    for (let i = 0; i < total; i++) {
-      if (await page.evaluate(() => window.currentDoc().pages.length) > 1) break;
-      await page.getByTestId('btn-next').click();
-    }
+    const doc = await gotoDoc(page, 'fx-letter');
+    expect(doc.pages.length).toBeGreaterThan(1);
     const before = await page.evaluate(() => window.currentPage().id);
     await page.getByTestId('btn-accept').click();
     await expect(page.getByTestId('status')).toContainText('accepted');
@@ -1159,19 +1194,20 @@ test('tapping a decided page in the filmstrip reopens it', async ({ page }) => {
 
 test('deciding the last page leaves you put and lights Send', async ({ page }) => {
   await ready(page);
+  await gotoDoc(page, 'fx-letter');
   const n = await decideAll(page);
   expect(await page.evaluate(() => window.currentDoc().ready)).toBe(true);
   await expect(page.getByTestId('btn-finalize')).toBeEnabled();
   await expect(page.getByTestId('btn-finalize')).toHaveAttribute('data-action', 'send');
-  await expect(page.getByTestId('staged-count')).toHaveText(String(n));
+  await expect(page.getByTestId('page-count')).toHaveText(String(n));
 });
 
 test('Send becomes Delete when every page is declined', async ({ page }) => {
   await ready(page);
+  await gotoDoc(page, 'fx-note');
   await decideAll(page, 'btn-reject');
   await expect(page.getByTestId('btn-finalize')).toHaveAttribute('data-action', 'delete');
   await expect(page.getByTestId('btn-finalize')).toBeEnabled();
-  await expect(page.getByTestId('staged-count')).toHaveText('');
   const batch = await page.evaluate(() => window.currentDoc().batch);
   await page.getByTestId('btn-finalize').click();
   await expect(page.getByTestId('status')).toContainText('deleted');
@@ -1195,3 +1231,48 @@ test('filmstrip tiles are page-shaped, not the generic round buttons',
     expect(box.h).toBeCloseTo(68, 0);
     expect(parseFloat(box.radius)).toBeLessThan(20);   // not a circle
   });
+
+test('the filmstrip toggles like the gridlines do', async ({ page }) => {
+  await ready(page);
+  const strip = page.locator('#filmstrip');
+  const toggle = page.getByTestId('film-toggle');
+  await expect(strip).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+  await toggle.click();
+  await expect(strip).toBeHidden();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // Hidden, not merely emptied: the pages are still there to come back to.
+  expect(await page.evaluate(() => window.currentDoc().pages.length))
+    .toBeGreaterThan(0);
+
+  await toggle.click();
+  await expect(strip).toBeVisible();
+  await expect(page.locator('#filmstrip .film')).toHaveCount(
+    await page.evaluate(() => window.currentDoc().pages.length));
+});
+
+test('the filmstrip stays hidden across pages and documents', async ({ page }) => {
+  await ready(page);
+  await page.getByTestId('film-toggle').click();
+  await expect(page.locator('#filmstrip')).toBeHidden();
+  await page.getByTestId('btn-next').click();
+  await expect(page.locator('#filmstrip')).toBeHidden();
+  await page.getByTestId('btn-reject').click();
+  await expect(page.locator('#filmstrip')).toBeHidden();
+});
+
+test('the page count sits on the strip toggle, not on Send', async ({ page }) => {
+  await ready(page);
+  const doc = await gotoDoc(page, 'fx-letter');
+  const n = doc.pages.length;
+  expect(n).toBeGreaterThan(1);
+  await expect(page.getByTestId('page-count')).toHaveText(String(n));
+  // Send carries no badge at all now.
+  expect(await page.locator('[data-testid=btn-finalize] .badge').count()).toBe(0);
+
+  // It counts the document's PAGES, so deciding one does not change it.
+  await page.getByTestId('btn-accept').click();
+  await page.waitForFunction(() => window.currentDoc().counts.accepted === 1);
+  await expect(page.getByTestId('page-count')).toHaveText(String(n));
+});

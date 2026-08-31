@@ -46,7 +46,8 @@ const state = {
   detectedAngle: 0, seedW: 0,
   format: 'A4', orientation: 'portrait', rotation: 0,
   view: { zoom: 1, panX: 0, panY: 0 },
-  mode: 'crop', grid: true, peek: false, pageSetup: false, history: [],
+  mode: 'crop', grid: true, film: true, peek: false, pageSetup: false,
+  history: [],
   // Wide screens have room for the filename inline; a phone does not.
   titleOpen: window.matchMedia('(min-width: 561px)').matches,
 };
@@ -707,6 +708,13 @@ function applyTitleState() {
 function toggleTitle() { state.titleOpen = !state.titleOpen; applyTitleState(); }
 window.toggleTitle = toggleTitle;
 
+function toggleFilmstrip() {
+  state.film = !state.film;
+  q('film-toggle').setAttribute('aria-pressed', String(state.film));
+  renderFilmstrip();
+}
+window.toggleFilmstrip = toggleFilmstrip;
+
 function toggleGrid() {
   state.grid = !state.grid;
   q('grid-toggle').setAttribute('aria-pressed', String(state.grid));
@@ -844,7 +852,10 @@ function updateStaged() {
   btn.classList.toggle('danger', del);
   use.setAttribute('href', del ? '/icons.svg#trash' : '/icons.svg#send');
   btn.dataset.action = del ? 'delete' : 'send';
-  q('staged-count').textContent = (!del && n) ? String(n) : '';
+  // The count belongs on the page strip, where it says how many pages this
+  // document HAS. On Send it said how many were accepted, which is a different
+  // number and only meaningful once everything is decided.
+  q('page-count').textContent = d ? String(d.counts.total) : '';
   btn.disabled = !d || !d.ready || (!del && n === 0);
   btn.title = del ? 'Delete this document'
     : (d && d.ready && n) ? `Send ${n} page${n === 1 ? '' : 's'} to paperless`
@@ -921,7 +932,8 @@ function renderFilmstrip() {
   const strip = document.getElementById('filmstrip');
   const d = currentDoc();
   strip.innerHTML = '';
-  if (!d) return;
+  strip.hidden = !state.film;
+  if (!d || !state.film) return;
   d.pages.forEach((p, i) => {
     const b = document.createElement('button');
     b.className = 'film';

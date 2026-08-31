@@ -89,7 +89,11 @@ The queue is a list of **documents**; a document is one ADF run. The chevrons in
 the top bar step between documents and the badge reads the document position,
 `2/3`. A **filmstrip** above the toolbar shows every page of the current
 document with its state: plain for undecided, a blue check for accepted, dimmed
-with a red cross for rejected, outlined for the one you are looking at.
+with a red cross for rejected, outlined for the one you are looking at. It
+toggles from the toolbar like the gridlines do, and its button carries a badge
+with the number of pages in the document - on Send that badge counted accepted
+pages, which is a different number and only meaningful once everything is
+decided.
 
 Pages are accepted or rejected individually. Deciding one moves you to the next
 undecided page of the same document, wrapping once - the filmstrip lets pages be
@@ -140,7 +144,7 @@ invented date.
 ## Tests
 
     ./.venv/bin/python -m pytest tests/     # 46 geometry / deskew / queue units
-    npx playwright test                     # 127 e2e (64 mobile, 63 desktop)
+    npx playwright test                     # 134 e2e (69 mobile, 65 desktop)
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and

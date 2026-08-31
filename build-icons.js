@@ -26,6 +26,7 @@ const ICONS = {
   crop: 'crop',
   straighten: 'ruler',
   grid: 'grid-2x2',
+  film: 'gallery-thumbnails',
   pagesetup: 'proportions',
   reset: 'rotate-ccw',
   send: 'send-horizontal',
