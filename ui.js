@@ -728,10 +728,18 @@ async function togglePeek() {
   q('btn-peek').setAttribute('aria-pressed', String(state.peek));
   if (!state.peek) { render(); return; }
   drawGrid(frameRectOnScreen());                    // clears the overlay
+  // Ask for the resolution this canvas will actually paint. cv.width is in
+  // DEVICE pixels (clientWidth x dpr), so on a phone at dpr 3 it is well over
+  // 1200. The server default is 560, which was then scaled UP to fill the
+  // screen -- the peek looked markedly softer than the ordinary view, which
+  // draws the full-resolution source. Capped so a desktop window cannot ask
+  // for a needlessly huge JPEG.
+  const want = Math.max(560, Math.min(2400, cv.width));
   const r = await fetch('/api/preview/' + encodeURIComponent(state.page.id), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ corners: cornersOf(state.frame),
-                           rotation: state.rotation, target: state.format }) });
+                           rotation: state.rotation, target: state.format,
+                           max_width: want, quality: 92 }) });
   if (!r.ok) { say('invalid crop', 'var(--err)'); state.peek = false; render(); return; }
   const url = URL.createObjectURL(await r.blob());
   const im = new Image();

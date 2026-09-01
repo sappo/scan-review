@@ -287,6 +287,10 @@ class PreviewBody(BaseModel):
     rotation: int = 0
     target: str = "free"
     max_width: int = 560
+    # The peek view fills the screen, so it asks for canvas resolution and a
+    # higher quality than the small inline preview needs. 82 is fine for a
+    # 560px thumbnail and visibly soft on scanned text at full size.
+    quality: int = 82
 
 
 @app.get("/api/queue")
@@ -418,7 +422,8 @@ def preview(page_id: str, body: PreviewBody):
         scale = body.max_width / out.shape[1]
         out = cv2.resize(out, (body.max_width, max(1, int(out.shape[0] * scale))),
                          interpolation=cv2.INTER_AREA)
-    ok, buf = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    ok, buf = cv2.imencode(".jpg", out,
+                           [cv2.IMWRITE_JPEG_QUALITY, max(50, min(97, body.quality))])
     if not ok:
         raise HTTPException(500, "preview encode failed")
     return Response(content=buf.tobytes(), media_type="image/jpeg", headers={

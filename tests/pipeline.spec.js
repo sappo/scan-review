@@ -37,7 +37,12 @@ test('the queue is a list of documents, each carrying its pages',
   });
 
 test('queue seeds a ratio-locked frame for every page', async ({ request }) => {
-  const pages = await allPages(request);
+  // Only pages the detector matched to a paper size get a seeded frame: a
+  // `free` page has no ratio to lock to, so `seeded` is null by design. Real
+  // scans land in `free` often enough (a skewed or edge-to-edge sheet) that
+  // asserting over the whole queue made this pass or fail on whatever happened
+  // to be waiting for review, not on the code.
+  const pages = (await allPages(request)).filter(p => p.format !== 'free');
   expect(pages.length).toBeGreaterThan(0);
   const RATIO = { A4: 297 / 210, A5: 210 / 148, A6: 148 / 105 };
   for (const p of pages) {
