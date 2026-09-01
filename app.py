@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from detect import detect
 import documents as documents_mod
+import fit
 import frame as frame_mod
 from deskew import text_skew
 from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
@@ -239,6 +240,17 @@ def seed_with_text(img, corners, fmt):
             "sheet_angle": seeded["angle"]}
     if skew.confident:
         seeded = dict(seeded, angle=seeded["angle"] + skew.angle_deg)
+
+    # Re-fit once the angle is settled. seed_frame() fits by least squares,
+    # which splits the error between both axes and so is free to hang over an
+    # edge; largest_inside() maximises coverage subject to staying on the
+    # sheet, which is what the operator was doing by hand. It has to run AFTER
+    # the text angle is applied, because the biggest frame that fits depends on
+    # the angle -- deskew is a prerequisite, not an afterthought.
+    fitted = fit.largest_inside(corners, fmt, seeded["angle"],
+                                orientation=seeded["orientation"])
+    if fitted is not None:
+        seeded = fitted
     return seeded, text
 
 

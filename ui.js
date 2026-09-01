@@ -570,11 +570,107 @@ window.pushHistory = pushHistory;
 function dialValue() { return state.frame.angle - state.detectedAngle; }
 window.dialValue = dialValue;
 
+// ------------------------------------------------------------------- fit
+
+/* The largest ratio-locked frame that fits inside the detected sheet.
+ *
+ * A mirror of fit.py -- same algorithm, same results -- because the dial
+ * re-fits on every change and cannot afford a round trip, while the server
+ * must seed independently and freeze that seed for ground truth. Keep the two
+ * in step; tests/test_fit.py pins the behaviour.
+ *
+ * With ratio and angle fixed, every frame corner is c + s*R(angle)*v_k, so
+ * "inside" is 16 linear inequalities in (cx, cy, s). Feasibility is monotone
+ * in s, so binary search on s and, for each candidate, clip the plane down to
+ * the feasible centres; a non-empty polygon means that size fits.
+ */
+function inwardEdges(quad) {
+  const cx = quad.reduce((a, p) => a + p[0], 0) / quad.length;
+  const cy = quad.reduce((a, p) => a + p[1], 0) / quad.length;
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const a = quad[i], b = quad[(i + 1) % 4];
+    let nx = b[1] - a[1], ny = -(b[0] - a[0]);
+    const len = Math.hypot(nx, ny);
+    if (len < 1e-12) continue;
+    nx /= len; ny /= len;
+    let d = nx * a[0] + ny * a[1];
+    if (nx * cx + ny * cy > d) { nx = -nx; ny = -ny; d = -d; }
+    out.push([nx, ny, d]);
+  }
+  return out;
+}
+
+function clipHalfPlane(poly, nx, ny, d) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i], nxt = poly[(i + 1) % poly.length];
+    const cv = nx * cur[0] + ny * cur[1] - d;
+    const nv = nx * nxt[0] + ny * nxt[1] - d;
+    if (cv <= 0) out.push(cur);
+    if ((cv > 0) !== (nv > 0)) {
+      const t = cv / (cv - nv);
+      out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
+    }
+  }
+  return out;
+}
+
+/** Biggest frame of this ratio at this angle inside `quad`, or null. */
+function largestInside(quad, ratio, angleDeg) {
+  const edges = inwardEdges(quad);
+  if (edges.length < 3) return null;
+  const a = angleDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const unit = [[-0.5, -ratio / 2], [0.5, -ratio / 2], [0.5, ratio / 2], [-0.5, ratio / 2]];
+  const rot = unit.map(([x, y]) => [x * ca - y * sa, x * sa + y * ca]);
+  // Per unit of scale, how far the furthest corner reaches along each normal.
+  const reach = edges.map(([nx, ny]) =>
+    Math.max(...rot.map(([x, y]) => nx * x + ny * y)));
+
+  const xs = quad.map(p => p[0]), ys = quad.map(p => p[1]);
+  const bound = Math.max(...xs.map(Math.abs), ...ys.map(Math.abs)) * 4 + 1;
+  let lo = 0, hi = Math.hypot(Math.max(...xs) - Math.min(...xs),
+                              Math.max(...ys) - Math.min(...ys)) * 2, best = null;
+  for (let it = 0; it < 50; it++) {
+    const mid = (lo + hi) / 2;
+    let poly = [[-bound, -bound], [bound, -bound], [bound, bound], [-bound, bound]];
+    for (let e = 0; e < edges.length && poly.length; e++) {
+      const [nx, ny, d] = edges[e];
+      poly = clipHalfPlane(poly, nx, ny, d - reach[e] * mid);
+    }
+    if (poly.length) { lo = mid; best = poly; } else { hi = mid; }
+  }
+  if (!best || lo < 1e-3) return null;
+  const cx = best.reduce((s2, p) => s2 + p[0], 0) / best.length;
+  const cy = best.reduce((s2, p) => s2 + p[1], 0) / best.length;
+  return { cx, cy, w: lo, h: lo * ratio };
+}
+
+/** Re-fit the frame to the sheet at the current angle. */
+function autoFit() {
+  // `detected` is the frozen detection record {corners, angle, format}, not a
+  // bare quad -- the sheet outline lives under .corners.
+  const det = state.page && state.page.detected;
+  const quad = det && det.corners;
+  if (!quad || quad.length !== 4 || state.format === 'free') return false;
+  const f = largestInside(quad, ratioOf(state.format, state.orientation),
+                          state.frame.angle);
+  if (!f) return false;
+  state.frame.cx = f.cx; state.frame.cy = f.cy;
+  state.frame.w = f.w; state.frame.h = f.h;
+  return true;
+}
+
 function setDial(deg) {
   // Snapped to DIAL_STEP so the dial lands on clean values instead of 2.40000001.
   const d = Math.round(
     Math.max(-DIAL_RANGE, Math.min(DIAL_RANGE, deg)) / DIAL_STEP) * DIAL_STEP;
   state.frame.angle = state.detectedAngle + d;
+  // Deskew is a prerequisite for the fit, not an independent control: the
+  // biggest frame that fits depends on the angle, so changing the angle
+  // invalidates the previous fit. Re-fit rather than leave a frame that now
+  // overhangs, or one that has quietly given up coverage it could reclaim.
+  autoFit();
   q('angle-readout').textContent = `${d >= 0 ? '+' : ''}${d.toFixed(2)}°`;
   drawDial();
   render();
