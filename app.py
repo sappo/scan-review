@@ -39,6 +39,10 @@ TRUTH = ROOT / "groundtruth"
 DELIVERY_LOG = ROOT / "mock-paperless" / "deliveries.json"
 STATE = WORK / "state.json"
 THUMBS = WORK / "thumbs"
+# Fallback only. The scan dpi travels per page from the Pi, because the
+# scanner's resolution can change and pages already in the queue were taken at
+# whatever it was then. A single global would silently remeasure every older
+# page: at 200 vs 300 an A4 sheet classifies 1.5x too large and stops being A4.
 DPI = 200
 MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 
@@ -149,19 +153,24 @@ def ingest_spool(state):
         else:
             corners = det.corners.tolist()
             angle, coverage = det.angle_deg, det.coverage
-        suggested = classify(corners) or "free"
+        # Read the sidecar first: dpi is what turns pixels into millimetres,
+        # so classify() cannot run before it is known.
+        hint = None
+        dpi = DPI
+        sidecar = path.with_suffix(path.suffix + ".json")
+        if sidecar.exists():
+            try:
+                meta0 = json.loads(sidecar.read_text())
+                hint = meta0.get("hint")
+                dpi = int(meta0.get("dpi") or DPI)
+            except Exception:
+                hint = None
+        suggested = classify(corners, dpi=dpi) or "free"
         # The seed fit runs HERE, on the server, and is frozen with `detected`.
         # If the browser computed it, a stale client could report a starting
         # frame it never displayed and the ground-truth dataset would overstate
         # how often the detector was right.
         seeded, text = seed_with_text(img, corners, suggested)
-        hint = None
-        sidecar = path.with_suffix(path.suffix + ".json")
-        if sidecar.exists():
-            try:
-                hint = json.loads(sidecar.read_text()).get("hint")
-            except Exception:
-                hint = None
         batch, page_no = batch_of(key)
         side = path.with_suffix(path.suffix + ".json")
         if side.exists():
@@ -174,6 +183,7 @@ def ingest_spool(state):
         state["pages"][key] = {
             "batch": batch,
             "page_no": page_no,
+            "dpi": dpi,
             "format": suggested,
             "hint": hint,
             # The operator's A4/A6 choice is ADVICE only: it never drives the
@@ -434,7 +444,7 @@ def preview(page_id: str, body: PreviewBody):
 
 @app.post("/api/ingest")
 async def ingest(file: UploadFile = File(...), hint: str = Form(""),
-                 batch: str = Form(""), page: str = Form("")):
+                 batch: str = Form(""), page: str = Form(""), dpi: str = Form("")):
     """Accept a scan pushed by the scanner host.
 
     Push rather than pull: the Pi authenticates to us (we already require auth),
@@ -470,7 +480,8 @@ async def ingest(file: UploadFile = File(...), hint: str = Form(""),
         stem, suffix = Path(name).stem, Path(name).suffix
         dest = SPOOL / f"{stem}-{digest[:8]}{suffix}"
     dest.write_bytes(data)
-    meta = {k: v for k, v in (("hint", hint), ("batch", batch), ("page", page)) if v}
+    meta = {k: v for k, v in (("hint", hint), ("batch", batch), ("page", page),
+                              ("dpi", dpi)) if v}
     if meta:
         dest.with_suffix(dest.suffix + ".json").write_text(json.dumps(meta))
     refresh()
@@ -585,7 +596,15 @@ def finalize(batch: str):
         # Each page at ITS OWN size, from its pixel dimensions at the scan dpi.
         # A fixed A4 layout put a 148x105mm A6 onto a 210x297mm portrait page,
         # throwing away the true size the ratio-locked frame exists to produce.
-        layout = img2pdf.get_fixed_dpi_layout_fun((DPI, DPI))
+        # Pages in one batch share a dpi in practice, but read it from the
+        # pages rather than assuming: a batch assembled from a re-ingested
+        # older scan would otherwise be laid out at the wrong physical size.
+        dpis = {int(p.get("dpi") or DPI) for p in staged}
+        page_dpi = dpis.pop() if len(dpis) == 1 else DPI
+        if dpis:
+            log_dpi = sorted({int(p.get("dpi") or DPI) for p in staged})
+            print(f"batch {batch}: mixed dpi {log_dpi}, laying out at {page_dpi}")
+        layout = img2pdf.get_fixed_dpi_layout_fun((page_dpi, page_dpi))
         pdf_path.write_bytes(img2pdf.convert(images, layout_fun=layout))
 
         delivered = CONSUME / pdf_path.name
