@@ -165,6 +165,7 @@ function syncActions() {
 window.syncActions = syncActions;
 
 function render() {
+  syncZoomUI();
   if (!ctx) return;
   syncActions();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -474,8 +475,23 @@ function moveGain() {
 window.moveGain = moveGain;
 const touches = new Map();
 let pinch = null;
+/* A right-button drag in progress: where it started and the pan it started
+ * from, so every move is measured from the origin and cannot drift. */
+let viewPan = null;
 
 cv.addEventListener('pointerdown', e => {
+  // Right button pans the sheet. Checked before hitTest, so it works over the
+  // crop core too -- where a left drag would move the crop instead.
+  if (e.button === 2) {
+    if (state.peek) return;
+    viewPan = { start: canvasPt(e),
+                panX: state.view.panX, panY: state.view.panY };
+    grab = null;
+    cv.setPointerCapture(e.pointerId);
+    cv.style.cursor = 'grabbing';
+    e.preventDefault();
+    return;
+  }
   touches.set(e.pointerId, canvasPt(e));
   if (touches.size === 2) {
     // Two fingers pan and zoom the VIEW and never touch the frame, so there is
@@ -501,6 +517,13 @@ cv.addEventListener('pointerdown', e => {
 });
 
 cv.addEventListener('pointermove', e => {
+  if (viewPan) {
+    const pt = canvasPt(e);
+    state.view.panX = viewPan.panX + (pt[0] - viewPan.start[0]);
+    state.view.panY = viewPan.panY + (pt[1] - viewPan.start[1]);
+    render();
+    return;
+  }
   if (touches.has(e.pointerId)) touches.set(e.pointerId, canvasPt(e));
   if (touches.size === 2 && pinch) {
     const [a, b] = [...touches.values()];
@@ -539,6 +562,7 @@ cv.addEventListener('pointermove', e => {
 for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
   cv.addEventListener(ev, e => {
     touches.delete(e.pointerId);
+    if (viewPan) { viewPan = null; cv.style.cursor = ''; }
     if (touches.size < 2) pinch = null;
     if (grab) { grab = null; grabStart = null; grabFrame = null; moveArmed = true; render(); }
   });
@@ -552,9 +576,84 @@ function setZoom(z, [sx, sy]) {
   v.panX = sx - cv.width / 2 - (sx - cv.width / 2 - v.panX) * k;
   v.panY = sy - cv.height / 2 - (sy - cv.height / 2 - v.panY) * k;
   v.zoom = next;
+  // At fit the whole sheet is on screen, so an offset centre is never useful --
+  // and leaving one there is how a pan strands the sheet half off the canvas
+  // with nothing obvious to grab. Zooming back out recentres by itself.
+  if (next <= ZOOM_MIN + 1e-6) { v.panX = 0; v.panY = 0; }
   render();
 }
 window.setZoom = setZoom;
+
+/* --------------------------------------------------------------- desktop zoom
+ *
+ * The view already zooms and pans -- two fingers do both. None of it was
+ * reachable with a mouse: no wheel handler, no keys, no buttons. These add the
+ * desktop half without touching the transform maths.
+ */
+
+/** Discrete stops for the buttons and keys, so a click lands somewhere
+ *  predictable instead of drifting by whatever factor. The wheel stays
+ *  continuous. */
+const ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+
+function canvasCentre() { return [cv.width / 2, cv.height / 2]; }
+
+/** Move one stop up or down the ladder, about the middle of the view. */
+function zoomStep(dir) {
+  const z = state.view.zoom;
+  const next = dir > 0
+    ? ZOOM_STEPS.find(v => v > z + 1e-6)
+    : [...ZOOM_STEPS].reverse().find(v => v < z - 1e-6);
+  if (next === undefined) return;                 // already at an end
+  setZoom(next, canvasCentre());
+}
+window.zoomStep = zoomStep;
+
+/** Back to fit. Pan has to go too: zooming out alone can leave the sheet
+ *  parked off-centre with nothing obvious to grab. */
+function zoomReset() {
+  state.view.zoom = 1;
+  state.view.panX = 0;
+  state.view.panY = 0;
+  render();
+}
+window.zoomReset = zoomReset;
+
+/** Keep the readout honest. Called from render(), so every path that changes
+ *  the view -- wheel, pinch, buttons, keys, a new page -- updates it. */
+function syncZoomUI() {
+  const el = q('zoom-readout');
+  if (!el) return;
+  el.textContent = Math.round(state.view.zoom * 100) + '%';
+  const z = state.view.zoom;
+  q('zoom-in').disabled = z >= ZOOM_MAX - 1e-6;
+  q('zoom-out').disabled = z <= ZOOM_MIN + 1e-6;
+}
+
+/* The stage does not scroll, so a plain wheel would otherwise do nothing at
+ * all. Ctrl+wheel lands here too: the browser would otherwise zoom the whole
+ * page, which is never what is wanted over the sheet. */
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (state.peek) return;
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  setZoom(state.view.zoom * factor, canvasPt(e));
+}, { passive: false });
+
+/* Right-drag pans the SHEET. Left-drag is spoken for -- it moves and resizes
+ * the crop -- so the view needs its own button, and the menu has to go or the
+ * drag never starts. */
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.isContentEditable ||
+            ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === '+' || e.key === '=') { zoomStep(1); e.preventDefault(); }
+  else if (e.key === '-' || e.key === '_') { zoomStep(-1); e.preventDefault(); }
+  else if (e.key === '0') { zoomReset(); e.preventDefault(); }
+});
 
 function pushHistory() {
   state.history.push({ frame: { ...state.frame }, format: state.format,

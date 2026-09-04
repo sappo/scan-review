@@ -68,6 +68,12 @@
      so only the horizontal target shrinks, and the two decisions that matter -
      accept and reject - stay 44px wide in the top bar. */
   #toolbar { gap:2px; padding:5px 4px; }
+  /* Mouse-only zoom controls. Hidden by default and revealed at the same
+     900px breakpoint the rest of the desktop layout uses. */
+  .zoomgrp { display:none; }
+  .zoomval { min-width:50px; text-align:center; font-size:14px;
+            font-weight:600; color:var(--text); opacity:.85;
+            font-variant-numeric:tabular-nums; }
   #toolbar button { width:38px; }
   .sep { flex:none; width:1px; height:24px; margin:0 5px;
          background:var(--line); border-radius:1px; }
@@ -147,6 +153,7 @@
   /* Wide screens: the clusters move to a floating column on the right rather
      than stacking over the middle of the page. */
   @media (min-width:900px) {
+    .zoomgrp { display:flex; gap:2px; align-items:center; }
     #controls { left:auto; right:14px; bottom:14px; top:auto;
                 align-items:flex-end; }
     .pill.wide { flex-wrap:nowrap; }
@@ -229,6 +236,17 @@
             class="badge" data-testid="page-count"></span></button>
     <button data-testid="btn-peek" onclick="togglePeek()"
             title="Preview result" aria-label="Preview result"><svg><use href="/icons.svg#peek"/></svg></button>
+    <!-- Zoom by hand, for a mouse. A phone pinches instead and has no room for
+         these, so the group is hidden below the desktop breakpoint. -->
+    <span class="zoomgrp" data-testid="zoom-group">
+      <span class="sep" role="separator" aria-orientation="vertical"></span>
+      <button data-testid="zoom-out" onclick="zoomStep(-1)"
+              title="Zoom out" aria-label="Zoom out"><svg><use href="/icons.svg#minus"/></svg></button>
+      <span class="zoomval" data-testid="zoom-readout"
+            role="status" aria-label="Zoom level">100%</span>
+      <button data-testid="zoom-in" onclick="zoomStep(1)"
+              title="Zoom in" aria-label="Zoom in"><svg><use href="/icons.svg#plus"/></svg></button>
+    </span>
     <button data-testid="btn-undo" onclick="undo()"
             title="Undo" aria-label="Undo"><svg><use href="/icons.svg#undo"/></svg></button>
     <button data-testid="btn-finalize" onclick="finalize()"

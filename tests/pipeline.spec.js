@@ -845,8 +845,10 @@ test('the top bar stays on one row at common phone widths', async ({ page }, tes
       const tb = document.getElementById('toolbar');
       return {
         btnRows: new Set([...tb.querySelectorAll('button')]
+          .filter(b => b.offsetParent !== null)
           .map(b => Math.round(b.getBoundingClientRect().top))).size,
-        buttons: tb.querySelectorAll('button').length,
+        buttons: [...tb.querySelectorAll('button')]
+          .filter(b => b.offsetParent !== null).length,
         // The filmstrip is expected alongside it; what must not double is the
         // toolbar itself.
         visibleBars: [...document.getElementById('controls').children]
@@ -1287,4 +1289,188 @@ test('the page count sits on the strip toggle, not on Send', async ({ page }) =>
   await page.getByTestId('btn-accept').click();
   await page.waitForFunction(() => window.currentDoc().counts.accepted === 1);
   await expect(page.getByTestId('page-count')).toHaveText(String(n));
+});
+
+// ------------------------------------------------------------ desktop zoom
+
+/** Which image pixel sits under a client-space point. The frame does not move
+ *  during a zoom, so comparing this before and after says whether the point
+ *  under the cursor stayed put. Uses the app's own transform, not a copy. */
+async function imagePointUnder(page, clientX, clientY) {
+  return page.evaluate(([cx, cy]) => {
+    const cv = document.querySelector('[data-testid="canvas"]');
+    const b = cv.getBoundingClientRect();
+    return window.toImage([(cx - b.left) * (cv.width / b.width),
+                           (cy - b.top) * (cv.height / b.height)]);
+  }, [clientX, clientY]);
+}
+const zoomOf = page => page.evaluate(() => window.state.view.zoom);
+const viewOf = page => page.evaluate(() => ({ ...window.state.view }));
+
+test('the wheel zooms and holds the point under the cursor still', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  // Deliberately off-centre: a bug that zooms about the canvas centre instead
+  // of the cursor still passes when the cursor IS the centre.
+  const x = box.x + box.width * 0.3, y = box.y + box.height * 0.65;
+
+  const before = await imagePointUnder(page, x, y);
+  await page.mouse.move(x, y);
+  await page.mouse.wheel(0, -400);
+  await page.waitForFunction(() => window.state.view.zoom > 1);
+  const after = await imagePointUnder(page, x, y);
+
+  expect(await zoomOf(page)).toBeGreaterThan(1);
+  // Sub-pixel tolerance. Canvas points are integers and the image is ~1664px
+  // wide, so a correct anchor still drifts a fraction of an image pixel on the
+  // smaller mobile canvas. The bug this guards against -- zooming about the
+  // canvas centre -- moves this point by hundreds of pixels, not two.
+  expect(Math.hypot(after[0] - before[0], after[1] - before[1])).toBeLessThan(2);
+});
+
+test('the wheel does not move the crop frame', async ({ page }) => {
+  await ready(page);
+  const before = await frameOf(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -400);
+  await page.waitForFunction(() => window.state.view.zoom > 1);
+  const after = await frameOf(page);
+  for (const k of ['cx', 'cy', 'w', 'h', 'angle'])
+    expect(after[k]).toBeCloseTo(before[k], 6);
+});
+
+test('wheeling back out stops at fit and never goes below it', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 400);
+  expect(await zoomOf(page)).toBe(1);
+});
+
+test('right-drag pans the sheet and leaves the crop alone', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.wheel(0, -400);                    // zoom in so panning shows
+  await page.waitForFunction(() => window.state.view.zoom > 1);
+
+  const frameBefore = await frameOf(page);
+  const viewBefore = await viewOf(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(cx + 80, cy + 50, { steps: 10 });
+  await page.mouse.up({ button: 'right' });
+
+  const viewAfter = await viewOf(page);
+  const frameAfter = await frameOf(page);
+  expect(viewAfter.panX).not.toBeCloseTo(viewBefore.panX, 1);
+  expect(viewAfter.panY).not.toBeCloseTo(viewBefore.panY, 1);
+  expect(viewAfter.zoom).toBeCloseTo(viewBefore.zoom, 6);
+  // The sheet moved; the crop did not.
+  for (const k of ['cx', 'cy', 'w', 'h', 'angle'])
+    expect(frameAfter[k]).toBeCloseTo(frameBefore[k], 6);
+});
+
+test('right-drag over the crop core pans instead of moving it', async ({ page }) => {
+  await ready(page);
+  // Centre of the canvas is inside the frame core, where a LEFT drag moves it.
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const before = await frameOf(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(cx + 70, cy + 40, { steps: 10 });
+  await page.mouse.up({ button: 'right' });
+  const after = await frameOf(page);
+  expect(after.cx).toBeCloseTo(before.cx, 6);
+  expect(after.cy).toBeCloseTo(before.cy, 6);
+});
+
+test('the canvas suppresses its context menu so right-drag is usable',
+  async ({ page }) => {
+    await ready(page);
+    const prevented = await page.evaluate(() => {
+      const cv = document.querySelector('[data-testid="canvas"]');
+      const ev = new MouseEvent('contextmenu', { cancelable: true, bubbles: true });
+      cv.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(prevented).toBe(true);
+  });
+
+// The -/readout/+ group is CSS-hidden below 900px: a phone has pinch already
+// and the toolbar has no room. Wheel, right-drag and the keys stay live at all
+// widths, so only these two tests are desktop-only.
+test.describe('desktop zoom controls', () => {
+  // Gate on the viewport, which is the actual reason -- the CSS breakpoint --
+  // rather than on the project name, which only correlates with it.
+  test.beforeEach(({ viewport }) => {
+    test.skip((viewport ? viewport.width : 0) < 900,
+              'the zoom button group is only shown at >=900px');
+  });
+
+test('the zoom buttons step a ladder and the readout tracks them',
+  async ({ page }) => {
+    await ready(page);
+    await expect(page.getByTestId('zoom-readout')).toHaveText('100%');
+    await page.getByTestId('zoom-in').click();
+    await expect(page.getByTestId('zoom-readout')).toHaveText('150%');
+    await page.getByTestId('zoom-in').click();
+    await expect(page.getByTestId('zoom-readout')).toHaveText('200%');
+    await page.getByTestId('zoom-out').click();
+    await expect(page.getByTestId('zoom-readout')).toHaveText('150%');
+    expect(await zoomOf(page)).toBeCloseTo(1.5, 6);
+  });
+
+test('stepping back out to fit recentres the sheet', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+  await page.mouse.wheel(0, -600);
+  await page.waitForFunction(() => window.state.view.zoom > 1);
+  // Pan it well away from centre, the state a right-drag can leave behind.
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(cx + 150, cy + 120, { steps: 8 });
+  await page.mouse.up({ button: 'right' });
+  expect((await viewOf(page)).panX).not.toBe(0);
+
+  // Zoom out disables itself at fit, so click only while it is live.
+  const out = page.getByTestId('zoom-out');
+  for (let i = 0; i < 10 && await out.isEnabled(); i++) await out.click();
+  await expect(out).toBeDisabled();          // it really did reach the bottom
+  const v = await viewOf(page);
+  expect(v.zoom).toBe(1);
+  expect(v.panX).toBe(0);          // back to fit means back to centre
+  expect(v.panY).toBe(0);
+});
+
+});   // desktop zoom controls
+
+test('plus, minus and zero work from the keyboard', async ({ page }) => {
+  await ready(page);
+  await page.keyboard.press('+');
+  expect(await zoomOf(page)).toBeCloseTo(1.5, 6);
+  await page.keyboard.press('-');
+  expect(await zoomOf(page)).toBeCloseTo(1, 6);
+  await page.keyboard.press('+');
+  await page.keyboard.press('+');
+  await page.keyboard.press('0');
+  const v = await viewOf(page);
+  expect(v.zoom).toBe(1);
+  expect(v.panX).toBe(0);
+});
+
+test('zoom resets when moving to another page', async ({ page }) => {
+  await ready(page);
+  const box = await page.getByTestId('canvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -400);
+  await page.waitForFunction(() => window.state.view.zoom > 1);
+  await page.getByTestId('btn-next').click();
+  await page.waitForFunction(() => window.state && window.state.img);
+  expect(await zoomOf(page)).toBe(1);
 });
