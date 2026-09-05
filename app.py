@@ -51,7 +51,10 @@ MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 for d in (SPOOL, WORK, OUT, CONSUME, TRUTH):
     d.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="scanpipe")
+# No /docs, /redoc or /openapi.json. They are behind auth, but they exist
+# only to explore an API by hand, and this one has a single known client.
+app = FastAPI(title="scanpipe", docs_url=None, redoc_url=None,
+              openapi_url=None)
 
 # --------------------------------------------------------------------------
 # access control
