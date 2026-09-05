@@ -171,7 +171,7 @@ def ingest_spool(state):
         # If the browser computed it, a stale client could report a starting
         # frame it never displayed and the ground-truth dataset would overstate
         # how often the detector was right.
-        seeded, text = seed_with_text(img, corners, suggested)
+        seeded, text = seed_with_text(img, corners, suggested, dpi=dpi)
         batch, page_no = batch_of(key)
         side = path.with_suffix(path.suffix + ".json")
         if side.exists():
@@ -210,7 +210,7 @@ def ingest_spool(state):
     return added
 
 
-def seed_with_text(img, corners, fmt):
+def seed_with_text(img, corners, fmt, dpi=DPI):
     """Seed a frame from the sheet, then level it to the printed content.
 
     detect.py measures the SHEET; deskew.py measures the CONTENT. They are
@@ -231,7 +231,8 @@ def seed_with_text(img, corners, fmt):
         return None, None
     seeded = frame_mod.seed_frame(corners, fmt)
     try:
-        crop = warp(img, frame_mod.corners_of(seeded), target=fmt).image
+        crop = warp(img, frame_mod.corners_of(seeded), target=fmt,
+                    dpi=dpi).image
         skew = text_skew(crop)
     except Exception:
         return seeded, None
@@ -277,7 +278,8 @@ def backfill_seeds(state):
         img = cv2.imread(page["source"])
         if img is None:
             continue
-        page["seeded"], page["text_skew"] = seed_with_text(img, det["corners"], fmt)
+        page["seeded"], page["text_skew"] = seed_with_text(
+            img, det["corners"], fmt, dpi=int(page.get("dpi") or DPI))
         changed = True
     return changed
 
@@ -369,7 +371,15 @@ def accept(page_id: str, body: AcceptBody):
             # Without this the failure is an AttributeError deep in warp() and
             # surfaces as an opaque 500.
             raise HTTPException(410, f"source image gone: {page['source']}")
-        result = warp(img, np.array(body.corners, dtype=np.float32), target=body.target)
+        # At the page's OWN dpi: finalize() lays each page out at that same dpi,
+        # so rendering at a fixed 200 gave the wrong physical size on any other
+        # scan - an A4 taken at 300dpi became a 140x198mm PDF page.
+        page_dpi = int(page.get("dpi") or DPI)
+        try:
+            result = warp(img, np.array(body.corners, dtype=np.float32),
+                          target=body.target, dpi=page_dpi)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
         out_img = result.image
         for _ in range((body.rotation // 90) % 4):
             out_img = cv2.rotate(out_img, cv2.ROTATE_90_CLOCKWISE)
@@ -399,7 +409,8 @@ def accept(page_id: str, body: AcceptBody):
             "at": datetime.now(timezone.utc).isoformat(),
             "schema": 2,
             "source": page["source"],
-            "scan": {"width": page["width"], "height": page["height"], "dpi": 200},
+            "scan": {"width": page["width"], "height": page["height"],
+                     "dpi": page_dpi},
             "hint": page.get("hint"),
             "detected": {"corners": detected.get("corners"),
                          "angle": detected.get("angle"),
@@ -407,7 +418,10 @@ def accept(page_id: str, body: AcceptBody):
             "seeded": seeded,
             "text_skew": page.get("text_skew"),
             "accepted": dict(accepted_frame, corners=body.corners),
-            "error": (frame_mod.frame_error(seeded, accepted_frame)
+            # dpi is what turns the pixel error into centre_dist_mm, the metric
+            # evaluate.py leads with; at a fixed 200 it was out by a third on a
+            # 300dpi scan.
+            "error": (frame_mod.frame_error(seeded, accepted_frame, dpi=page_dpi)
                       if seeded else None),
         }
         if record["error"] is not None:
