@@ -110,6 +110,15 @@ Sending is the one irreversible step: the PDF has been delivered.
 **Send needs every page decided.** Sending half a document would produce a second
 PDF for the same ADF run later, and one run is one document.
 
+**Send closes the whole document, rejected pages included.** Those pages move to
+`closed` - still rejected in intent, but no longer holding the document open. A
+rejected page used to keep its status after Send, which is not in the closed set,
+so the document came back as an empty "delete me" card once its PDF had already
+been delivered. Rejecting the blank back of a duplex sheet is the ordinary case,
+so this was the ordinary path. For the same reason **nothing in a sent document
+can be reopened**, not just the pages that were sent: reopening a rejected
+sibling would let one ADF run produce a second PDF.
+
 **Send becomes Delete when every page is declined.** There is no PDF to make
 then, so the only way to close the document is to delete it - which moves its
 scans to `spool-archive/` rather than erasing them. A wholly declined document
@@ -137,17 +146,31 @@ invented date.
 - The frame may extend past the scan and is deliberately NOT clamped. See
   "Review UI" below - clamping cost 3 degrees of residual skew on a real A6.
 - The review UI trusts whoever can reach it, behind HTTP basic auth on the LAN.
+- A crop is capped at `warp.MAX_OUT_PX` (64M px). With `target: "free"` the
+  output raster is sized from client-supplied corners, so without a ceiling one
+  small request could ask for a 10.8GB allocation on a host that also runs mail
+  and a database.
 - Reordering pages within a document is not possible; they come out in scan
   order.
 - Sending is the only irreversible action. Once a document is sent its pages
   cannot be reopened; the recourse is on the paperless side.
 - Deleting a document moves its scans to `spool-archive/`. Nothing empties that
-  directory automatically.
+  directory automatically. A name already taken there gets a digest suffix, the
+  same rule ingest uses - `shutil.move` overwrites, so discarding a second
+  `scan-01.png` used to destroy the first one, which was then in neither
+  `spool/` nor the archive.
 
 ## Tests
 
-    ./.venv/bin/python -m pytest tests/     # 46 geometry / deskew / queue units
-    npx playwright test                     # 134 e2e (69 mobile, 65 desktop)
+    ./.venv/bin/python -m pytest tests/     # 69 geometry / deskew / queue / accept units
+    npx playwright test                     # 158 e2e (79 mobile, 79 desktop)
+
+`tests/test_app_dpi_and_lifecycle.py` drives app.py's endpoint functions
+directly, with the module-level paths pointed at a tmp tree - there is no httpx
+in the venv, so no TestClient. It covers accept at 150/200/300 dpi, the
+ground-truth record, and the document lifecycle through Send and discard. The
+dpi parametrisation exists because every fixture here is 200 dpi, so the one e2e
+test guarding true page size passed against a `warp()` that ignored dpi entirely.
 
 The Python suite covers `frame.py` and `evaluate.py` without a browser or a
 running server: the ratio table, the seed fit against the real 1663x2328 A4 and
