@@ -22,8 +22,6 @@ PADDING_ROW_STD = 0.01      # synthesised padding rows have exactly zero varianc
 class Detection:
     corners: np.ndarray      # 4x2 float32, ordered TL, TR, BR, BL
     angle_deg: float         # skew; positive = counter-clockwise
-    width_px: float
-    height_px: float
     coverage: float          # fraction of the mask filled by the chosen contour
 
 
@@ -83,5 +81,4 @@ def detect(image_bgr):
     area = w * h
     coverage = (cv2.contourArea(contour) / area) if area else 0.0
     return Detection(corners=corners, angle_deg=float(angle),
-                     width_px=float(max(w, h) if False else w),
-                     height_px=float(h), coverage=float(coverage))
+                     coverage=float(coverage))

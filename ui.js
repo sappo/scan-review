@@ -46,7 +46,7 @@ const state = {
   // throw away work. Navigation you cannot trust is worse than none.
   edits: {},
   frame: null,                // {cx, cy, w, h, angle} in source px
-  detectedAngle: 0, seedW: 0,
+  detectedAngle: 0,
   format: 'A4', orientation: 'portrait', rotation: 0,
   view: { zoom: 1, panX: 0, panY: 0 },
   mode: 'crop', grid: true, film: true, peek: false, pageSetup: false,
@@ -464,18 +464,27 @@ window.LOUPE_ZOOM_FOR_TEST = LOUPE_ZOOM;
  * zone would swallow the interior of a small or zoomed-out frame and leave
  * nothing to grab for moving it.
  */
+/* Half-extent of a corner's grab zone.
+ *
+ * BAND_MAX on any ordinary frame. The cap is what matters on a small one: at a
+ * third of the shorter side the four corner zones still leave a third of it in
+ * the middle, so there is always a core to drag the frame by. hitTest() used to
+ * undo this with Math.max(22 * dpr, b) to keep a 44px touch target - but a
+ * frame small enough for the cap to bind has no room for a 44px target that is
+ * not also the whole frame, so the two intents cannot both hold. The core wins:
+ * a corner that is slightly small is still reachable, whereas a frame you
+ * cannot move at all has no way back. */
 function bandWidth() {
   const r = frameRectOnScreen();
   const dpr = window.devicePixelRatio || 1;
-  return Math.min(BAND_MAX * dpr, Math.min(r.w, r.h) / 4);
+  return Math.min(BAND_MAX * dpr, Math.min(r.w, r.h) / 3);
 }
 window.bandWidth = bandWidth;
 
 /** What is under this canvas point: a corner, an edge, the movable core, or nothing. */
 function hitTest([sx, sy]) {
   const r = frameRectOnScreen(), b = bandWidth();
-  const dpr = window.devicePixelRatio || 1;
-  const corner = Math.max(22 * dpr, b);     // 44px touch target, half-extent
+  const corner = b;
   const pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
   const turn = ((viewRot() / 90) | 0) % 4;
   for (let s = 0; s < 4; s++) {
@@ -509,7 +518,7 @@ function fromLocalWith(f, [lx, ly]) {
  * Measured against `g`, the frame at the start of the gesture, not the live
  * frame this function is about to modify - see toImageWith().
  */
-function applyResize(kind, ix, screenPt, g) {
+function applyResize(ix, screenPt, g) {
   const ratio = ratioOf(state.format, state.orientation);
   const [lx, ly] = toLocalWith(g, toImageWith(g, screenPt));
   const hw = g.w / 2, hh = g.h / 2;
@@ -633,7 +642,7 @@ cv.addEventListener('pointermove', e => {
     state.frame.cx = grabFrame.cx + dx * g;
     state.frame.cy = grabFrame.cy + dy * g;
   } else {
-    applyResize(grab.kind, grab.ix, pt, grabFrame);
+    applyResize(grab.ix, pt, grabFrame);
   }
   render();
 });
@@ -1375,7 +1384,6 @@ async function showPage() {
     state.rotation = 0;
   }
   state.detectedAngle = s ? s.angle : 0;
-  state.seedW = s ? s.w : state.frame.w;
   state.history = [];
   state.view = { zoom: 1, panX: 0, panY: 0 };
   q('angle-readout').textContent =
