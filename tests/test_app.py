@@ -226,3 +226,20 @@ def test_a_rotated_frame_still_matches_its_own_corners(env):
     assert rec["accepted"]["angle"] == pytest.approx(-7.679, abs=1e-6)
 
 
+# --------------------------------------------------------------------------
+# filename -> (batch, page)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("name,expected", [
+    ("a4-20260902-100531-03.png", ("a4-20260902-100531", 3)),
+    ("duplex-20260902-234050-10.png", ("duplex-20260902-234050", 10)),
+    ("scan-01.png", ("scan", 1)),
+    ("run-100.png", ("run", 100)),
+    # A manual run with a date and no page number. The old non-greedy \d{2,}
+    # split at the FIRST dash and read the date as a page number, so two such
+    # files grouped into one document and one PDF.
+    ("report-20260902.png", ("report-20260902", 1)),
+    ("invoice2024.png", ("invoice2024", 1)),
+    ("plain.png", ("plain", 1)),
+])
+def test_batch_of(name, expected):
+    assert A.batch_of(name) == expected

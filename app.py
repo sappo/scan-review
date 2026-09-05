@@ -168,7 +168,13 @@ _lock = threading.Lock()
 # adf-scan writes one run as BASE-01.png, BASE-02.png, ... so the basename IS
 # the batch. Derived here only as a fallback: the Pi sends it explicitly,
 # because the collision rename below can change a filename after the fact.
-PAGE_SUFFIX = re.compile(r"^(?P<batch>.+?)-(?P<page>\d{2,})$")
+# Greedy, and a page number is 2-3 digits: adf-scan writes %02d and a run of
+# 100+ sheets needs a third. Non-greedy with an open-ended \d{2,} split at the
+# FIRST dash and swallowed anything, so `report-20260902.png` parsed as batch
+# `report`, page 20260902 - and two such files grouped into one document and
+# one PDF. A name that does not end in a plausible page number now falls
+# through to the single-page default instead of being forced into the shape.
+PAGE_SUFFIX = re.compile(r"^(?P<batch>.+)-(?P<page>\d{2,3})$")
 
 
 def batch_of(name):
