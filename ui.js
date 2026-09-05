@@ -212,6 +212,10 @@ function resize() {
     c.width = Math.round(c.clientWidth * dpr);
     c.height = Math.round(c.clientHeight * dpr);
   }
+  // The dial has its own canvas and render() does not touch it, so rotating
+  // the phone in straighten mode left it at the old backing size, stretched by
+  // CSS, until the next dial interaction.
+  if (state.mode === 'straighten') drawDial();
   render();
 }
 window.addEventListener('resize', resize);
@@ -566,14 +570,16 @@ cv.addEventListener('pointerdown', e => {
     return;
   }
   touches.set(e.pointerId, canvasPt(e));
-  if (touches.size === 2) {
+  if (touches.size >= 2) {
     // Two fingers pan and zoom the VIEW and never touch the frame, so there is
     // no modifier state and no chance of a pinch quietly resizing the crop.
+    // A THIRD pointer must not fall through to hitTest and grab the frame, and
+    // must not leave the baseline as it was: the pinch is rebuilt whenever the
+    // finger count changes, so a palm touching down and lifting again cannot
+    // leave `dist`/`mid` describing a gesture from before all the intervening
+    // motion - which snapped the view to a different zoom in one frame.
     grab = null;
-    const [a, b] = [...touches.values()];
-    pinch = { dist: Math.hypot(a[0] - b[0], a[1] - b[1]),
-              mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
-              zoom: state.view.zoom };
+    startPinch();
     return;
   }
   if (!state.frame || state.peek) return;
@@ -636,9 +642,19 @@ for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
   cv.addEventListener(ev, e => {
     touches.delete(e.pointerId);
     if (viewPan) { viewPan = null; cv.style.cursor = ''; }
-    if (touches.size < 2) pinch = null;
+    // Rebuild rather than keep: dropping from three fingers to two leaves a
+    // baseline measured against two fingers that are no longer the ones here.
+    if (touches.size < 2) pinch = null; else startPinch();
     if (grab) { grab = null; grabStart = null; grabFrame = null; moveArmed = true; render(); }
   });
+}
+
+/** (Re)take the pinch baseline from the first two live pointers. */
+function startPinch() {
+  const [a, b] = [...touches.values()];
+  pinch = { dist: Math.hypot(a[0] - b[0], a[1] - b[1]),
+            mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+            zoom: state.view.zoom };
 }
 
 /** Zoom about a canvas point, keeping that point stationary. */
@@ -915,11 +931,14 @@ function cancelGestures() {
 }
 window.cancelGestures = cancelGestures;
 dial.addEventListener('pointerdown', e => {
-  dialGrab = { x: e.clientX, start: dialValue(), pushed: false };
+  // Pinned to one pointer: a second finger landing on the dial used to
+  // overwrite the origin, so the first finger's next move was measured
+  // from the second finger's position and the angle jumped.
+  dialGrab = { id: e.pointerId, x: e.clientX, start: dialValue(), pushed: false };
   dial.setPointerCapture(e.pointerId);
 });
 dial.addEventListener('pointermove', e => {
-  if (!dialGrab) return;
+  if (!dialGrab || e.pointerId !== dialGrab.id) return;
   const pxPerDeg = dial.clientWidth / (DIAL_RANGE * 2);
   const next = dialGrab.start + (e.clientX - dialGrab.x) / pxPerDeg;
   if (Math.abs(next - dialValue()) < DIAL_STEP / 2) return;   // no step yet
@@ -927,7 +946,9 @@ dial.addEventListener('pointermove', e => {
   setDial(next);
 });
 for (const ev of ['pointerup', 'pointercancel'])
-  dial.addEventListener(ev, () => { dialGrab = null; });
+  dial.addEventListener(ev, e => {
+    if (dialGrab && e.pointerId === dialGrab.id) dialGrab = null;
+  });
 
 // ---------------------------------------------------------------- controls
 
