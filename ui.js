@@ -123,6 +123,16 @@ window.addEventListener('unhandledrejection', e => {
   say(`unexpected error: ${m}`, 'var(--err)');
 });
 
+/* True when there is a page to act on.
+ *
+ * The empty queue is the app's NORMAL terminal state - documents.build() drops
+ * a document once every page is closed, so sending the last one leaves
+ * state.frame null. updateNav() disabled accept/reject/undo/reset but not the
+ * rest of the toolbar, and straighten, peek, the format chips, swap, rotate and
+ * the nudges all dereference the frame: dialValue() is literally
+ * `state.frame.angle - state.detectedAngle`. */
+function haveFrame() { return !!state.frame; }
+
 function ratioOf(fmt, orientation) {
   return orientation === 'landscape' ? 1 / RATIO[fmt] : RATIO[fmt];
 }
@@ -854,7 +864,10 @@ function setDial(deg) {
 }
 window.setDial = setDial;
 
-function nudge(d) { pushHistory(); setDial(dialValue() + d); }
+function nudge(d) {
+  if (!haveFrame()) return;
+  pushHistory(); setDial(dialValue() + d);
+}
 window.nudge = nudge;
 
 function drawDial() {
@@ -919,6 +932,7 @@ for (const ev of ['pointerup', 'pointercancel'])
 // ---------------------------------------------------------------- controls
 
 function setMode(m) {
+  if (!haveFrame()) return;
   state.mode = m;
   q('mode-crop').setAttribute('aria-pressed', String(m === 'crop'));
   q('mode-straighten').setAttribute('aria-pressed', String(m === 'straighten'));
@@ -945,8 +959,12 @@ function relock() {
   syncChips(); render();
 }
 
-function setFormat(fmt) { pushHistory(); state.format = fmt; relock(); }
+function setFormat(fmt) {
+  if (!haveFrame()) return;
+  pushHistory(); state.format = fmt; relock();
+}
 function swapOrientation() {
+  if (!haveFrame()) return;
   pushHistory();
   state.orientation = state.orientation === 'portrait' ? 'landscape' : 'portrait';
   const f = state.frame, t = f.w; f.w = f.h; f.h = t;
@@ -954,9 +972,10 @@ function swapOrientation() {
 }
 // Output rotation, applied by the backend AFTER warp - for a sheet fed upside
 // down. Distinct from swapOrientation, which changes the crop's shape.
-function rotate90() { pushHistory(); state.rotation = (state.rotation + 90) % 360; render(); }
+function rotate90() { if (!haveFrame()) return; pushHistory(); state.rotation = (state.rotation + 90) % 360; render(); }
 
 function undo() {
+  if (!haveFrame()) return;
   const h = state.history.pop();
   if (!h) return;
   state.frame = { ...h.frame }; state.format = h.format;
@@ -1024,6 +1043,7 @@ function setPeek(v) {
 window.setPeek = setPeek;
 
 async function togglePeekImpl() {
+  if (!haveFrame()) return;
   const gen = state.gen;
   setPeek(!state.peek);
   if (!state.peek) { render(); return; }
@@ -1201,6 +1221,11 @@ function updateNav() {
     : 'queue empty';
   q('btn-accept').disabled = !p || p.status !== 'pending';
   q('btn-reject').disabled = !p || p.status !== 'pending';
+  // Everything that needs a frame goes dead together with it, so an empty
+  // queue offers no button that cannot do anything.
+  for (const id of ['mode-crop', 'mode-straighten', 'btn-peek', 'btn-pagesetup',
+                    'btn-rotate', 'btn-swap'])
+    { const b = q(id); if (b) b.disabled = !state.frame; }
   updateStaged();
   applyTitleState();
 }
