@@ -443,6 +443,23 @@ def accept(page_id: str, body: AcceptBody):
         seeded = page.get("seeded")
         if body.frame:
             accepted_frame = dict(body.frame)
+            # Both halves of this record arrive from the client, and the whole
+            # point of the ground truth is that they describe the same thing:
+            # `corners` is what was warped, `frame` is what the operator was
+            # manipulating. The seed is computed server-side precisely so a
+            # stale client cannot misreport the frame it was shown - but
+            # `accepted` was written down unchecked, so the same class of bug
+            # could quietly corrupt the other side of every comparison.
+            implied = frame_mod.frame_from_corners(body.corners)
+            drift = max(abs(implied["cx"] - accepted_frame.get("cx", 0)),
+                        abs(implied["cy"] - accepted_frame.get("cy", 0)),
+                        abs(implied["w"] - accepted_frame.get("w", 0)),
+                        abs(implied["h"] - accepted_frame.get("h", 0)))
+            # A pixel absorbs float noise through the corner round-trip; a real
+            # disagreement is orders of magnitude larger than that.
+            if drift > 1.0:
+                raise HTTPException(
+                    400, f"frame disagrees with corners by {drift:.1f}px")
         else:
             accepted_frame = frame_mod.frame_from_corners(body.corners)
             accepted_frame["format"] = body.target

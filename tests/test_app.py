@@ -173,3 +173,56 @@ def test_discard_keeps_a_scan_and_its_sidecar_together(env):
     A.discard("scan")
     png = _archive_names(env)[0]
     assert (A.ARCHIVE / (png + ".json")).exists(), "sidecar lost its scan"
+
+
+# --------------------------------------------------------------------------
+# the accepted frame must describe the corners it arrived with
+# --------------------------------------------------------------------------
+def _frame_of(page):
+    f = dict(page["seeded"])
+    f["rotation"] = 0
+    return f
+
+
+def test_a_frame_that_matches_its_corners_is_recorded(env):
+    p = _page(env, "a4-20260905-101500-01.png", 200, "a4-20260905-101500", 1)
+    _write_state(env, p)
+    f = _frame_of(p)
+    corners = A.frame_mod.corners_of(f).tolist()
+    A.accept(p["id"], A.AcceptBody(corners=corners, rotation=0, target="A4",
+                                   frame=f))
+    rec = json.loads((A.TRUTH / f"{p['id']}.json").read_text())
+    assert rec["accepted"]["w"] == pytest.approx(f["w"])
+
+
+def test_a_frame_that_contradicts_its_corners_is_refused(env):
+    """The ground truth is only worth having if both halves agree.
+
+    `seeded` is computed on the server precisely so a stale client cannot
+    misreport the frame it was shown. `accepted` arrived from the client
+    alongside the corners and was written down unchecked, so the same class of
+    client bug could silently corrupt the other side of every comparison.
+    """
+    p = _page(env, "a4-20260905-101500-01.png", 200, "a4-20260905-101500", 1)
+    _write_state(env, p)
+    f = _frame_of(p)
+    corners = A.frame_mod.corners_of(f).tolist()
+    lying = dict(f, w=f["w"] * 0.5, cx=f["cx"] + 300)
+    with pytest.raises(Exception) as exc:
+        A.accept(p["id"], A.AcceptBody(corners=corners, rotation=0,
+                                       target="A4", frame=lying))
+    assert getattr(exc.value, "status_code", None) == 400
+
+
+def test_a_rotated_frame_still_matches_its_own_corners(env):
+    """The check has to survive a real skew, not just an axis-aligned frame."""
+    p = _page(env, "a4-20260905-101500-01.png", 200, "a4-20260905-101500", 1)
+    _write_state(env, p)
+    f = dict(_frame_of(p), angle=-7.679)
+    corners = A.frame_mod.corners_of(f).tolist()
+    A.accept(p["id"], A.AcceptBody(corners=corners, rotation=0, target="A4",
+                                   frame=f))
+    rec = json.loads((A.TRUTH / f"{p['id']}.json").read_text())
+    assert rec["accepted"]["angle"] == pytest.approx(-7.679, abs=1e-6)
+
+
