@@ -75,6 +75,39 @@ if not (AUTH_USER and AUTH_PASS) and not ALLOW_ANONYMOUS:
 
 
 @app.middleware("http")
+async def limit_body(request: Request, call_next):
+    """Refuse an oversize body BEFORE anything reads it.
+
+    The check inside ingest() runs too late to protect the disk. FastAPI fully
+    parses the multipart body before the endpoint is entered, and Starlette's
+    `max_part_size` guard applies only to non-file parts - file parts stream
+    into a SpooledTemporaryFile under /tmp with no ceiling at all. So by the
+    time ingest() can raise 413 the bytes are already on the root filesystem,
+    which on this host also carries the mail spool and PostgreSQL.
+
+    require_auth is declared after this one and so runs OUTSIDE it (Starlette
+    makes the last-added middleware outermost). That is the right way round:
+    an unauthenticated flood gets its 401 without the body being read at all,
+    and an authenticated one is stopped here - still before routing, and so
+    still before FastAPI parses the multipart.
+    """
+    if request.method in ("POST", "PUT", "PATCH"):
+        declared = request.headers.get("content-length")
+        if declared is None:
+            # Chunked uploads give no length to check, and the only client is
+            # the Pi's push script, which always sends one.
+            return Response(status_code=411, content="content-length required")
+        try:
+            too_big = int(declared) > MAX_UPLOAD_BYTES
+        except ValueError:
+            return Response(status_code=400, content="bad content-length")
+        if too_big:
+            return Response(status_code=413,
+                            content=f"body exceeds {MAX_UPLOAD_BYTES} bytes")
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def require_auth(request: Request, call_next):
     if not (AUTH_USER and AUTH_PASS):
         return await call_next(request)
