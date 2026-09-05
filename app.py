@@ -758,7 +758,12 @@ def finalize(batch: str):
         ids = [p["id"] for p in staged]
         images = [p["output"] for p in staged]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        pdf_path = OUT / f"document-{stamp}.pdf"
+        # The batch id disambiguates two finalizes in the same second, which
+        # the timestamp alone cannot. Without it the second PDF overwrote the
+        # first while deliveries.json logged both, so one document was silently
+        # lost and the surviving file was attributed to the wrong batch.
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", batch)
+        pdf_path = OUT / f"document-{stamp}-{safe}.pdf"
         # Each page at ITS OWN size, from its pixel dimensions at the scan dpi.
         # A fixed A4 layout put a 148x105mm A6 onto a 210x297mm portrait page,
         # throwing away the true size the ratio-locked frame exists to produce.
