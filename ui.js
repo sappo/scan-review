@@ -38,6 +38,9 @@ const dctx = dial.getContext('2d');
 
 const state = {
   page: null, img: null,
+  // Bumped by every showPage(). Anything that resumes after an await
+  // compares against it and gives up if a newer page has since started.
+  gen: 0,
   documents: [], docIndex: 0, pageIndex: 0,
   // Edits are kept per page id, so stepping away and back does not silently
   // throw away work. Navigation you cannot trust is worse than none.
@@ -868,6 +871,21 @@ window.drawDial = drawDial;
 // A whole drag gesture is ONE undo step: history is pushed on pointerdown, not
 // on every move event.
 let dialGrab = null;
+
+/* Drop every in-flight gesture. Gesture state is module-level and a page
+ * switch does not go through the pointer handlers, so without this a drag
+ * survives it: hold an interior drag, tap a filmstrip thumbnail with a second
+ * finger, keep moving, and the NEW page's frame is moved using the OLD page's
+ * grabFrame - an A6 gets an A4's centre and the crop leaves the sheet. Worse,
+ * gesturePushed is still set, so pushOnce() records nothing and Undo cannot
+ * get it back. */
+function cancelGestures() {
+  grab = grabStart = grabFrame = viewPan = pinch = dialGrab = null;
+  moveArmed = true;
+  gesturePushed = false;
+  touches.clear();
+}
+window.cancelGestures = cancelGestures;
 dial.addEventListener('pointerdown', e => {
   dialGrab = { x: e.clientX, start: dialValue(), pushed: false };
   dial.setPointerCapture(e.pointerId);
@@ -989,6 +1007,7 @@ function setPeek(v) {
 window.setPeek = setPeek;
 
 async function togglePeekImpl() {
+  const gen = state.gen;
   setPeek(!state.peek);
   if (!state.peek) { render(); return; }
   drawGrid(frameRectOnScreen());                    // clears the overlay
@@ -1016,11 +1035,13 @@ async function togglePeekImpl() {
     say(r.status === 400 ? 'invalid crop' : `server said ${r.status}`, 'var(--err)');
     setPeek(false); render(); return;
   }
+  if (gen !== state.gen || !state.peek) return;   // navigated, or toggled off
   const url = URL.createObjectURL(await r.blob());
   const im = new Image();
   // Without this a decode failure leaks the blob for the life of the document.
   im.onerror = () => URL.revokeObjectURL(url);
   im.onload = () => {
+    if (gen !== state.gen || !state.peek) { URL.revokeObjectURL(url); return; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     const s = Math.min(cv.width / im.width, cv.height / im.height);
@@ -1261,6 +1282,14 @@ function renderFilmstrip() {
 window.renderFilmstrip = renderFilmstrip;
 
 async function showPage() {
+  // Every page switch invalidates whatever the last one had in flight. Two
+  // showPage() runs overlap freely - the filmstrip's onclick and the chevrons
+  // are plain handlers, nothing serialises them - and the loser used to finish
+  // last and win: tap a slow page 3 then page 1, and page 3's image landed in
+  // state.img UNDER page 1's frame, dim mask and loupes. Accept then posted
+  // page 1's id with a crop aimed at a different sheet.
+  const gen = ++state.gen;
+  cancelGestures();
   setPeek(false);
   const p = currentPage();
   if (!p) {
@@ -1288,12 +1317,18 @@ async function showPage() {
   state.view = { zoom: 1, panX: 0, panY: 0 };
   q('angle-readout').textContent =
       `${dialValue() >= 0 ? '+' : ''}${dialValue().toFixed(2)}°`;
-  await new Promise(res => {
-    const im = new Image();
-    im.onload = () => { state.img = im; res(); };
-    im.onerror = () => res();
-    im.src = '/api/image/' + encodeURIComponent(p.id) + '?t=' + Date.now();
+  const im = await new Promise(res => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => res(null);
+    // No cache-bust: a spool file is immutable once ingested - ingest() gives a
+    // same-named scan with different content a distinct name - so the only
+    // thing `?t=` bought was re-downloading tens of megabytes on every revisit.
+    img.src = '/api/image/' + encodeURIComponent(p.id);
   });
+  if (gen !== state.gen) return;      // a newer page won while this one loaded
+  state.img = im;
+  if (!im) say('could not load the scan', 'var(--err)');
   syncChips();
   renderFilmstrip();
   updateNav();
