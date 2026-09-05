@@ -391,10 +391,21 @@ class PreviewBody(BaseModel):
     quality: int = 82
 
 
+# Internal bookkeeping the browser has no use for. `source` and `output` are
+# absolute paths on this host, so shipping them told anyone with the password
+# the account name and the layout of the disk for no benefit at all - neither
+# ui.js nor the test suite reads either.
+PRIVATE_PAGE_FIELDS = ("source", "output")
+
+
 @app.get("/api/queue")
 def queue():
     s, _ = refresh()
-    return {"documents": documents_mod.build(s)}
+    docs = documents_mod.build(s)
+    for d in docs:
+        d["pages"] = [{k: v for k, v in p.items()
+                       if k not in PRIVATE_PAGE_FIELDS} for p in d["pages"]]
+    return {"documents": docs}
 
 
 @app.get("/api/image/{page_id}")
