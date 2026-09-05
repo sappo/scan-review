@@ -443,8 +443,14 @@ def preview(page_id: str, body: PreviewBody):
     if not page:
         raise HTTPException(404, "unknown page")
     img = cv2.imread(page["source"])
+    if img is None:
+        # Same guard the other three readers carry: without it a spool file
+        # removed under a queued page is an AttributeError inside warp(), which
+        # surfaces as an opaque 500 rather than accept()'s 410.
+        raise HTTPException(410, f"source image gone: {page['source']}")
     try:
-        result = warp(img, np.array(body.corners, dtype=np.float32), target=body.target)
+        result = warp(img, np.array(body.corners, dtype=np.float32),
+                      target=body.target, dpi=int(page.get("dpi") or DPI))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     out = result.image
