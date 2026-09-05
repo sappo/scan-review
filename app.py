@@ -219,9 +219,14 @@ def save_state(s):
 def ingest_spool(state):
     """Pick up new scans, detect the sheet, and queue them for review."""
     added = []
+    # `ingested` stays a list in the JSON - documents.build() reads arrival
+    # order from it - but membership is tested once per spool file per refresh,
+    # and /api/queue refreshes on every poll. Linear scan made that quadratic
+    # in the number of scans ever seen.
+    seen = set(state["ingested"])
     for path in sorted(SPOOL.glob("*.png")) + sorted(SPOOL.glob("*.jpg")):
         key = path.name
-        if key in state["ingested"]:
+        if key in seen:
             continue
         img = cv2.imread(str(path))
         if img is None:
@@ -286,6 +291,7 @@ def ingest_spool(state):
             "text_skew": text,
         }
         state["ingested"].append(key)
+        seen.add(key)
         added.append(key)
     return added
 
