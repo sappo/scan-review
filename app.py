@@ -109,6 +109,33 @@ async def limit_body(request: Request, call_next):
 
 
 @app.middleware("http")
+async def deny_cross_site(request: Request, call_next):
+    """Refuse a state change that a foreign page caused the browser to make.
+
+    Basic-auth credentials live in the browser's per-origin auth cache and are
+    replayed on cross-site form submissions - SameSite governs cookies and does
+    nothing for an Authorization header. /api/reject, /api/discard and
+    /api/finalize take no request body, so a plain
+
+        <form method=POST action="https://host:8765/api/finalize/a4-...">
+
+    on any page the operator visits fires them, and finalize is irreversible by
+    design. Batch ids follow the guessable <size>-<YYYYmmdd>-<HHMMSS> shape.
+
+    A MISSING header allows the request: Sec-Fetch-Site is sent by browsers,
+    and the non-browser client that matters here - the Pi's push script - does
+    not send it. That is the right default, because the attack requires a
+    browser to be the one replaying the credentials in the first place.
+    """
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        site = request.headers.get("sec-fetch-site")
+        if site is not None and site != "same-origin":
+            return Response(status_code=403,
+                            content=f"cross-site {request.method} refused")
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def require_auth(request: Request, call_next):
     if not (AUTH_USER and AUTH_PASS):
         return await call_next(request)
