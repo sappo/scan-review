@@ -7,6 +7,13 @@ import numpy as np
 # ISO sizes in mm, portrait.
 PAPER_MM = {"A4": (210.0, 297.0), "A5": (148.0, 210.0), "A6": (105.0, 148.0)}
 
+# Ceiling on the output raster, in pixels. With target="free" the size comes
+# straight from client-supplied corners, so without this a single small request
+# can ask for an arbitrarily large allocation: a 60000x60000 quad is 10.8GB of
+# BGR in one warpPerspective call, and this host also runs mail and a database.
+# 64M px is roughly 1.8x an A4 at 600dpi, so no real scan comes close.
+MAX_OUT_PX = 64_000_000
+
 
 @dataclass
 class WarpResult:
@@ -61,7 +68,12 @@ def warp(image_bgr, corners, target=None, dpi=200):
     white, so the page geometry stays true and the missing sliver is visibly
     blank. `outside` reports how much was affected.
     """
-    c = np.asarray(corners, dtype=np.float32).reshape(4, 2)
+    c = np.asarray(corners, dtype=np.float32)
+    if c.size != 8:
+        # pydantic types the body as list[list[float]] but does not pin the
+        # count, so a wrong one otherwise surfaces as an opaque reshape error.
+        raise ValueError(f"expected four corners, got {c.size // 2}")
+    c = c.reshape(4, 2)
     h, w = image_bgr.shape[:2]
 
     outside_pts = ((c[:, 0] < 0) | (c[:, 1] < 0) |
@@ -77,6 +89,8 @@ def warp(image_bgr, corners, target=None, dpi=200):
         label = "free"
     if out_w < 8 or out_h < 8:
         raise ValueError(f"degenerate crop {out_w}x{out_h}")
+    if out_w * out_h > MAX_OUT_PX:
+        raise ValueError(f"crop too large: {out_w}x{out_h}")
 
     dst = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]],
                    dtype=np.float32)
