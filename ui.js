@@ -1132,7 +1132,7 @@ async function acceptImpl() {
   const out = await r.json();
   say(`accepted ${out.width}×${out.height}`, 'var(--accent)');
   delete state.edits[state.page.id];
-  await load();
+  await load(false);
   advanceAfterDecision();
   await showPage();
 }
@@ -1143,7 +1143,7 @@ async function rejectImpl() {
                 { method: 'POST' });
   say('rejected');
   delete state.edits[state.page.id];
-  await load();
+  await load(false);
   advanceAfterDecision();
   await showPage();
 }
@@ -1378,7 +1378,13 @@ async function showPage() {
 }
 window.showPage = showPage;
 
-async function load() {
+/* `show` is false when the caller is about to move to a different page.
+ *
+ * A decision used to cost two full-resolution downloads: load() ended in
+ * showPage(), which re-fetched the scan just decided, rendered it, and then
+ * threw it away when advanceAfterDecision() moved on - a visible flash of the
+ * decided page, and tens of megabytes over the phone's Wi-Fi. */
+async function load(show = true) {
   const r = await request('/api/queue');
   const data = await r.json();
   state.documents = data.documents || [];
@@ -1386,7 +1392,7 @@ async function load() {
                                         state.documents.length - 1));
   const d = currentDoc();
   if (!d || state.pageIndex >= d.pages.length) state.pageIndex = firstUndecided(d);
-  await showPage();
+  if (show) await showPage();
 }
 window.load = load;
 
