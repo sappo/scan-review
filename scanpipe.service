@@ -1,0 +1,21 @@
+[Unit]
+Description=Scan review pipeline (scan -> deskew/crop -> review -> paperless)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kevin.sapper/projects/scanpipe
+# Credentials live in a 0600 file so they are not visible in the unit or in ps.
+EnvironmentFile=/home/kevin.sapper/projects/scanpipe/secrets.env
+# Loopback only. nginx terminates TLS on 8765 and proxies here, so the scans
+# and the basic-auth password never cross the Wi-Fi in the clear - see
+# nginx-scanpipe.conf. Binding 0.0.0.0 would leave the plaintext port listening
+# beside the encrypted one and quietly undo that.
+# Single process on purpose: state.json is read-modify-written under an
+# in-process lock, which cannot serialise across workers.
+ExecStart=/home/kevin.sapper/projects/scanpipe/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8766
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

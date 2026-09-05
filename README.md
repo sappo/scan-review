@@ -2,10 +2,13 @@
 
 Running now as a user service on this machine, reachable from the LAN.
 
-    open http://192.168.1.10:8765     (log in: user `scan`, password in secrets.env)
+    open https://scans.example.org:8765    (log in: user `scan`, password in secrets.env)
 
 Credentials live in `secrets.env` (mode 0600) and are loaded by the systemd unit,
-so they never appear in `ps` or in the unit file.
+so they never appear in `ps` or in the unit file. The app **refuses to start**
+without them: a blank `SCANPIPE_PASS` used to start cleanly and serve every scan
+to anyone who could reach the port, logging nothing to say so. Set
+`SCANPIPE_ALLOW_ANONYMOUS=1` for a deliberately open local instance.
 
     systemctl --user status scanpipe      # state
     systemctl --user restart scanpipe     # after code changes
@@ -215,13 +218,38 @@ nftables rule - see "Network access".
 
 ## Network access
 
-The service binds 0.0.0.0:8765 and requires HTTP basic auth.
+uvicorn binds **127.0.0.1:8766**; nginx terminates TLS on 8765 and proxies to
+it. Basic auth is mandatory and the app refuses to start without it.
+
+TLS is not decoration here. Basic auth sends the password on EVERY request and
+the browser replays it for each thumbnail and image fetch, so on plain HTTP any
+device holding the Wi-Fi PSK - a guest phone, a smart plug - could capture both
+the credentials and the scans. This host already terminates a Let's Encrypt
+certificate, so the UI has no reason to run in the clear.
+
+    sudo install -m644 nginx-scanpipe.conf /etc/nginx/conf.d/scanpipe.conf
+    sudo nginx -t && sudo systemctl reload nginx
+    install -m644 scanpipe.service ~/.config/systemd/user/scanpipe.service
+    systemctl --user daemon-reload && systemctl --user restart scanpipe
+
+The URL is `https://scans.example.org:8765` - the public NAME, over hairpin NAT,
+because that is what the certificate is valid for. `https://192.168.1.10:8765`
+reaches the same server but fails the hostname check. The Pi's `~/scanpipe.env`
+carries the same URL in `SCANPIPE_URL`; it is on the LAN, so the allowlist lets
+it through.
+
+Access is restricted in TWO independent places, either of which alone keeps the
+port off the internet: nginx `allow 192.168.1.0/24; deny all;`, and the
+nftables rule below.
 
 This host is internet-facing - YunoHost, with mail/web on 0.0.0.0 and a
 dynamic-DNS name - and the nftables firewall is `policy drop` with only
 22, 25, 80, 443, 587, 993 open. Port 8765 is therefore opened by a LAN-ONLY
 rule, so the UI stays unreachable from the internet even if the router forwards
-the port or UPnP opens it:
+the port or UPnP opens it. That file now carries its own `drop` as well as its
+`accept`: it used to contribute only an accept, which left the whole LAN-only
+property resting on `policy drop` in a neighbouring file that YunoHost owns and
+regenerates.
 
     sudo install -m644 nftables-scanpipe.conf /etc/nftables.d/scanpipe.conf
     sudo systemctl reload nftables
