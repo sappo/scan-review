@@ -130,3 +130,46 @@ def test_a_page_cannot_be_reopened_once_its_document_is_sent(env):
             A.reopen(pid)
         assert getattr(exc.value, "status_code", None) == 409
 
+
+def _archive_names(env):
+    return sorted(p.name for p in (A.ARCHIVE).glob("*.png"))
+
+
+def test_discard_never_overwrites_an_earlier_archived_scan(env):
+    """Two sessions produce the same basename; the archive must keep both.
+
+    ingest() goes to real trouble over this - a same-named scan with different
+    content is stored under a distinct name, because "silently replacing the
+    earlier one would destroy ground-truth data". discard() used shutil.move,
+    which clobbers, and so undid exactly that guarantee. The scan is gone for
+    good: it is not in spool/ and it is not in the archive either.
+    """
+    first = _page(env, "scan-01.png", 200, "scan", 1, status="rejected")
+    _write_state(env, first)
+    # Content A is distinguishable from content B.
+    cv2.imwrite(first["source"], np.full((40, 40, 3), 11, np.uint8))
+    A.discard("scan")
+    assert _archive_names(env) == ["scan-01.png"]
+    archived_a = cv2.imread(str(A.ARCHIVE / "scan-01.png"))
+
+    # A later session, same basename, different content.
+    second = _page(env, "scan-01.png", 200, "scan", 1, status="rejected")
+    _write_state(env, second)
+    cv2.imwrite(second["source"], np.full((40, 40, 3), 222, np.uint8))
+    A.discard("scan")
+
+    names = _archive_names(env)
+    assert len(names) == 2, f"the first scan was overwritten: {names}"
+    # ...and the original content is still readable somewhere in the archive.
+    survivors = [cv2.imread(str(A.ARCHIVE / n)).mean() for n in names]
+    assert any(abs(v - archived_a.mean()) < 1 for v in survivors)
+
+
+def test_discard_keeps_a_scan_and_its_sidecar_together(env):
+    p = _page(env, "scan-01.png", 200, "scan", 1, status="rejected")
+    _write_state(env, p)
+    side = pathlib.Path(p["source"] + ".json")
+    side.write_text('{"batch": "scan", "page": "1"}')
+    A.discard("scan")
+    png = _archive_names(env)[0]
+    assert (A.ARCHIVE / (png + ".json")).exists(), "sidecar lost its scan"

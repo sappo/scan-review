@@ -532,6 +532,24 @@ def reject(page_id: str):
         return {"ok": True}
 
 
+def _archive_dest(src):
+    """A name in ARCHIVE that does not overwrite an earlier scan.
+
+    shutil.move clobbers. Two scanning sessions naturally produce the same
+    basename, and ingest() already refuses to let the second destroy the first
+    - but discard() used to undo that guarantee on the way out, leaving the
+    original in neither spool/ nor the archive. Same rule as ingest: identical
+    content is a no-op, different content gets a digest suffix.
+    """
+    dest = ARCHIVE / src.name
+    if not dest.exists():
+        return dest
+    digest = hashlib.sha256(src.read_bytes()).hexdigest()
+    if hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
+        return dest                     # same scan already archived
+    return ARCHIVE / f"{src.stem}-{digest[:8]}{src.suffix}"
+
+
 @app.post("/api/discard/{batch}")
 def discard(batch: str):
     """Close a document that has nothing worth keeping.
@@ -559,11 +577,14 @@ def discard(batch: str):
         for p in members:
             src = Path(p["source"])
             if src.exists():
-                shutil.move(str(src), str(ARCHIVE / src.name))
-                moved.append(src.name)
-            side = src.with_suffix(src.suffix + ".json")
-            if side.exists():
-                shutil.move(str(side), str(ARCHIVE / side.name))
+                dest = _archive_dest(src)
+                shutil.move(str(src), str(dest))
+                moved.append(dest.name)
+                side = src.with_suffix(src.suffix + ".json")
+                if side.exists():
+                    # Follow the scan's final name, or a renamed scan and its
+                    # sidecar stop referring to each other.
+                    shutil.move(str(side), str(ARCHIVE / (dest.name + ".json")))
             p["status"] = "discarded"
         save_state(s)
         return {"ok": True, "batch": batch, "archived": moved}
