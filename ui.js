@@ -823,6 +823,21 @@ function autoFit() {
   return true;
 }
 
+/* Redraw the dial to match state.frame, changing nothing.
+ *
+ * undo() and resetFrame() used to call setDial() to refresh it, but setDial()
+ * re-fits: it ends in autoFit(), which overwrites cx/cy/w/h. So undoing a drag
+ * in straighten mode - where the frame IS draggable - restored the old frame
+ * and then discarded everything but its angle, leaving a third rectangle that
+ * was neither the before nor the after. */
+function refreshDial() {
+  if (!state.frame) return;
+  const d = dialValue();
+  q('angle-readout').textContent = `${d >= 0 ? '+' : ''}${d.toFixed(2)}°`;
+  if (state.mode === 'straighten') drawDial();
+}
+window.refreshDial = refreshDial;
+
 function setDial(deg) {
   // Snapped to DIAL_STEP so the dial lands on clean values instead of 2.40000001.
   const d = Math.round(
@@ -947,7 +962,8 @@ function undo() {
   state.frame = { ...h.frame }; state.format = h.format;
   state.orientation = h.orientation; state.rotation = h.rotation;
   syncChips();
-  if (state.mode === 'straighten') setDial(dialValue()); else render();
+  refreshDial();
+  render();
 }
 
 function resetFrame() {
@@ -959,7 +975,8 @@ function resetFrame() {
   state.frame = { cx: s.cx, cy: s.cy, w: s.w, h: s.h, angle: s.angle };
   state.format = s.format; state.orientation = s.orientation; state.rotation = 0;
   syncChips();
-  if (state.mode === 'straighten') setDial(0); else render();
+  refreshDial();
+  render();
 }
 
 /** Page size and rotation are set once per page at most, so they live behind a
