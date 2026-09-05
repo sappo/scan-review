@@ -60,6 +60,66 @@ function say(m, c) {
   e.style.color = c || 'var(--dim)';
 }
 
+/* Every action here talks to the server, over a phone's Wi-Fi, while reviewing
+ * documents that must not be lost. A bare `await fetch` rejects when the phone
+ * walks out of range; the handler then aborts mid-way and the UI is left saying
+ * "accepting…" for ever with the page still pending, so the operator taps again.
+ * Every request goes through here so a failure is always visible, and every
+ * entry point through guard() so it is always caught.
+ *
+ * `r.ok` is checked here too: /api/queue answers 401 with a plain-text body, and
+ * `r.json()` on that throws a SyntaxError that used to leave a blank canvas with
+ * no message and no way back except a reload.
+ */
+async function request(url, opts) {
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch {
+    throw new Error('network unreachable');
+  }
+  if (!r.ok) throw new Error(`server said ${r.status}`);
+  return r;
+}
+
+/* Catch and report, so no entry point can fail silently.
+ *
+ * `exclusive` additionally serialises the DECISIONS - accept, reject, send.
+ * A double-tap there would otherwise report a failure for a decision that in
+ * fact succeeded, because the second POST 404s precisely because the first one
+ * worked and the page is no longer pending.
+ *
+ * Navigation is deliberately NOT exclusive. Stepping fetches the next scan, so
+ * an exclusive chevron drops the second of two quick taps and the operator
+ * advances one document instead of two - worse than the double-request it
+ * would have avoided.
+ *
+ * Only user-facing entry points are wrapped. load() and showPage() must stay
+ * unwrapped: accept() awaits them internally, and a busy check there would
+ * silently skip the reload instead of deferring it.
+ */
+let busy = false;
+function guard(fn, what, exclusive = true) {
+  return async (...args) => {
+    if (exclusive) {
+      if (busy) return;
+      busy = true;
+    }
+    try {
+      await fn(...args);
+    } catch (e) {
+      say(`${what} failed: ${e.message}`, 'var(--err)');
+    } finally {
+      if (exclusive) busy = false;
+    }
+  };
+}
+
+window.addEventListener('unhandledrejection', e => {
+  const m = (e.reason && e.reason.message) || e.reason;
+  say(`unexpected error: ${m}`, 'var(--err)');
+});
+
 function ratioOf(fmt, orientation) {
   return orientation === 'landscape' ? 1 / RATIO[fmt] : RATIO[fmt];
 }
@@ -918,9 +978,18 @@ function toggleGrid() {
 window.toggleGrid = toggleGrid;
 
 /** Peek: the warped result full-screen, from the same endpoint Accept uses. */
-async function togglePeek() {
-  state.peek = !state.peek;
-  q('btn-peek').setAttribute('aria-pressed', String(state.peek));
+/* State and button must move together. The failure path used to clear
+ * state.peek but leave aria-pressed="true", so the button stayed lit while peek
+ * was off - and render() bails whenever state.peek is true, so the mirror-image
+ * desync froze the canvas. */
+function setPeek(v) {
+  state.peek = v;
+  q('btn-peek').setAttribute('aria-pressed', String(v));
+}
+window.setPeek = setPeek;
+
+async function togglePeekImpl() {
+  setPeek(!state.peek);
   if (!state.peek) { render(); return; }
   drawGrid(frameRectOnScreen());                    // clears the overlay
   // Ask for the resolution this canvas will actually paint. cv.width is in
@@ -930,14 +999,27 @@ async function togglePeek() {
   // draws the full-resolution source. Capped so a desktop window cannot ask
   // for a needlessly huge JPEG.
   const want = Math.max(560, Math.min(2400, cv.width));
-  const r = await fetch('/api/preview/' + encodeURIComponent(state.page.id), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ corners: cornersOf(state.frame),
-                           rotation: state.rotation, target: state.format,
-                           max_width: want, quality: 92 }) });
-  if (!r.ok) { say('invalid crop', 'var(--err)'); state.peek = false; render(); return; }
+  let r;
+  try {
+    r = await fetch('/api/preview/' + encodeURIComponent(state.page.id), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corners: cornersOf(state.frame),
+                             rotation: state.rotation, target: state.format,
+                             max_width: want, quality: 92 }) });
+  } catch {
+    setPeek(false); render();
+    throw new Error('network unreachable');
+  }
+  if (!r.ok) {
+    // A 400 here means the crop itself is unrenderable, which is the user's
+    // doing and worth naming; anything else is the server's.
+    say(r.status === 400 ? 'invalid crop' : `server said ${r.status}`, 'var(--err)');
+    setPeek(false); render(); return;
+  }
   const url = URL.createObjectURL(await r.blob());
   const im = new Image();
+  // Without this a decode failure leaks the blob for the life of the document.
+  im.onerror = () => URL.revokeObjectURL(url);
   im.onload = () => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -950,6 +1032,7 @@ async function togglePeek() {
 }
 window.undo = undo; window.resetFrame = resetFrame; window.setFormat = setFormat;
 window.swapOrientation = swapOrientation; window.rotate90 = rotate90;
+const togglePeek = guard(togglePeekImpl, 'peek', false);
 window.togglePeek = togglePeek;
 
 // ----------------------------------------------------------------- actions
@@ -977,10 +1060,10 @@ function showFlags() {
 }
 window.showFlags = showFlags;
 
-async function accept() {
+async function acceptImpl() {
   if (!state.page) return;
   say('accepting…');
-  const r = await fetch('/api/accept/' + encodeURIComponent(state.page.id), {
+  const r = await request('/api/accept/' + encodeURIComponent(state.page.id), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       corners: cornersOf(state.frame),
@@ -988,7 +1071,6 @@ async function accept() {
       // decompose the error per axis instead of blending it into one number.
       frame: { ...state.frame, format: state.format, orientation: state.orientation },
       rotation: state.rotation, target: state.format }) });
-  if (!r.ok) { say('accept failed', 'var(--err)'); return; }
   const out = await r.json();
   say(`accepted ${out.width}×${out.height}`, 'var(--accent)');
   delete state.edits[state.page.id];
@@ -997,9 +1079,10 @@ async function accept() {
   await showPage();
 }
 
-async function reject() {
+async function rejectImpl() {
   if (!state.page) return;
-  await fetch('/api/reject/' + encodeURIComponent(state.page.id), { method: 'POST' });
+  await request('/api/reject/' + encodeURIComponent(state.page.id),
+                { method: 'POST' });
   say('rejected');
   delete state.edits[state.page.id];
   await load();
@@ -1007,19 +1090,21 @@ async function reject() {
   await showPage();
 }
 
-async function finalize() {
+async function finalizeImpl() {
   const d = currentDoc();
   if (!d || !d.ready) { say('decide every page first', 'var(--err)'); return; }
   const del = d.deletable;
-  const r = await fetch(`/api/${del ? 'discard' : 'finalize'}/`
-                        + encodeURIComponent(d.batch), { method: 'POST' });
-  if (!r.ok) { say(del ? 'delete failed' : 'nothing to send', 'var(--err)'); return; }
+  const r = await request(`/api/${del ? 'discard' : 'finalize'}/`
+                          + encodeURIComponent(d.batch), { method: 'POST' });
   const out = await r.json();
   say(del ? 'document deleted'
           : `sent to paperless: ${out.pages} page(s)`, 'var(--accent)');
   state.pageIndex = 0;
   await load();
 }
+const accept = guard(acceptImpl, 'accept');
+const reject = guard(rejectImpl, 'reject');
+const finalize = guard(finalizeImpl, 'send');
 window.accept = accept; window.reject = reject; window.finalize = finalize;
 
 // -------------------------------------------------------------------- load
@@ -1084,7 +1169,12 @@ function updateNav() {
 
 /** Step DOCUMENTS. Bounded, not wrapping: on a phone a wrap looks identical to
  *  not having moved. */
-async function step(delta) {
+async function stepImpl(delta) {
+  // A message about the page you are leaving would read as being about the one
+  // you arrive at - 'accept failed' from page A is not about page B. Cleared
+  // HERE and not in showPage(), because showPage() is also the last step of a
+  // decision, where the status IS that decision's confirmation.
+  say('');
   const next = state.docIndex + delta;
   if (next < 0 || next >= state.documents.length) return;
   captureEdit();
@@ -1092,6 +1182,7 @@ async function step(delta) {
   state.pageIndex = firstUndecided(state.documents[next]);
   await showPage();
 }
+const step = guard(stepImpl, 'navigation', false);
 window.step = step;
 
 function firstUndecided(doc) {
@@ -1102,19 +1193,28 @@ function firstUndecided(doc) {
 
 /** Open a page of this document. A decided page is reopened first - that is
  *  what makes the last look before Send worth having. */
-async function selectPage(i) {
+async function selectPageImpl(i) {
+  say('');                      // see stepImpl
   const d = currentDoc();
   if (!d || !d.pages[i]) return;
   captureEdit();
   const p = d.pages[i];
   state.pageIndex = i;
   if (p.status === 'accepted' || p.status === 'rejected') {
-    const r = await fetch('/api/reopen/' + encodeURIComponent(p.id),
-                          { method: 'POST' });
+    let r;
+    try {
+      r = await fetch('/api/reopen/' + encodeURIComponent(p.id),
+                      { method: 'POST' });
+    } catch {
+      throw new Error('network unreachable');
+    }
+    // A refusal is not an error: a page of an already-sent document simply
+    // stays as it is. Only a dead network is worth shouting about.
     if (r.ok) { await load(); return; }
   }
   await showPage();
 }
+const selectPage = guard(selectPageImpl, 'open page', false);
 window.selectPage = selectPage;
 
 /** After a decision, the next undecided page of this document, scanning forward
@@ -1161,7 +1261,7 @@ function renderFilmstrip() {
 window.renderFilmstrip = renderFilmstrip;
 
 async function showPage() {
-  state.peek = false;
+  setPeek(false);
   const p = currentPage();
   if (!p) {
     state.page = null; state.img = null; state.frame = null;
@@ -1202,7 +1302,7 @@ async function showPage() {
 window.showPage = showPage;
 
 async function load() {
-  const r = await fetch('/api/queue');
+  const r = await request('/api/queue');
   const data = await r.json();
   state.documents = data.documents || [];
   state.docIndex = Math.max(0, Math.min(state.docIndex,
@@ -1212,4 +1312,8 @@ async function load() {
   await showPage();
 }
 window.load = load;
-load();
+
+// The very first load has no caller to catch it: a 500 from /api/queue - which
+// does real detection work per request - or a 401 used to leave a featureless
+// black canvas with no message and no retry short of a reload.
+load().catch(e => say(`could not load the queue: ${e.message}`, 'var(--err)'));
