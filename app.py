@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anyio
 import cv2
 import img2pdf
 import numpy as np
@@ -549,7 +550,7 @@ async def ingest(file: UploadFile = File(...), hint: str = Form(""),
     dest = SPOOL / name
     if dest.exists():
         if hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
-            refresh()
+            await anyio.to_thread.run_sync(refresh)
             return {"ok": True, "stored": dest.name, "bytes": len(data),
                     "sha256": digest, "hint": hint or None, "duplicate": True}
         stem, suffix = Path(name).stem, Path(name).suffix
@@ -559,7 +560,12 @@ async def ingest(file: UploadFile = File(...), hint: str = Form(""),
                               ("dpi", dpi)) if v}
     if meta:
         dest.with_suffix(dest.suffix + ".json").write_text(json.dumps(meta))
-    refresh()
+    # Off the event loop. This is the only `async def` endpoint, so its body
+    # runs ON the loop, and refresh() is heavy synchronous work - measured at
+    # 166ms per new page for detect + deskew - that also takes the blocking
+    # state lock. Run inline it stalls every other request, including the
+    # review UI in someone's hand, for the whole of that.
+    await anyio.to_thread.run_sync(refresh)
     return {"ok": True, "stored": dest.name, "bytes": len(data), "sha256": digest,
             "hint": hint or None, "duplicate": False}
 
