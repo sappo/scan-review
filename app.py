@@ -58,10 +58,20 @@ app = FastAPI(title="scanpipe")
 # The service is reachable from the LAN, and this host also answers on 0.0.0.0
 # for mail/web with a dynamic-DNS name, so an unauthenticated UI serving scanned
 # bank and medical documents would be a poor idea. Basic auth is enough here and
-# browsers handle it natively. Set SCANPIPE_USER/SCANPIPE_PASS to enable it;
-# leave them unset for a purely local, unauthenticated setup.
+# browsers handle it natively; nginx puts TLS in front of it, because basic auth
+# replays the password on every request including each thumbnail fetch.
 AUTH_USER = os.environ.get("SCANPIPE_USER", "")
 AUTH_PASS = os.environ.get("SCANPIPE_PASS", "")
+# Fail CLOSED. A missing EnvironmentFile already stops the unit, but a file that
+# merely went blank - an edit leaving SCANPIPE_PASS= empty, a typo'd key - used
+# to start cleanly and serve every scanned bank and medical document to anyone
+# who could reach the port, logging nothing to say so. Refusing to start is loud;
+# serving unauthenticated is silent, and silence is the wrong failure here.
+ALLOW_ANONYMOUS = os.environ.get("SCANPIPE_ALLOW_ANONYMOUS") == "1"
+if not (AUTH_USER and AUTH_PASS) and not ALLOW_ANONYMOUS:
+    raise RuntimeError(
+        "SCANPIPE_USER and SCANPIPE_PASS must both be set; refusing to start. "
+        "Set SCANPIPE_ALLOW_ANONYMOUS=1 for a deliberately open local instance.")
 
 
 @app.middleware("http")
