@@ -92,3 +92,41 @@ def test_ground_truth_records_the_pages_real_dpi(env):
     moved = rec["error"]["centre_dist_px"]
     assert rec["error"]["centre_dist_mm"] == pytest.approx(moved * 25.4 / 300)
 
+
+def test_a_sent_document_with_a_rejected_page_leaves_the_queue(env):
+    """Rejecting the blank back of a duplex sheet must not strand the document.
+
+    finalize() marked only the ACCEPTED pages, so a rejected sibling kept a
+    status outside documents.CLOSED and the whole document came back as an
+    empty "delete me" card after its PDF had already been delivered.
+    """
+    keep = _page(env, "duplex-20260905-101500-01.png", 200,
+                 "duplex-20260905-101500", 1)
+    blank = _page(env, "duplex-20260905-101500-02.png", 200,
+                  "duplex-20260905-101500", 2)
+    _write_state(env, keep, blank)
+    _accept(keep)
+    A.reject(blank["id"])
+    A.finalize("duplex-20260905-101500")
+
+    state = A.load_state()
+    assert state["pages"][keep["id"]]["status"] == "sent"
+    assert state["pages"][blank["id"]]["status"] in D.CLOSED
+    assert D.build(state) == []
+
+
+def test_a_page_cannot_be_reopened_once_its_document_is_sent(env):
+    """One ADF run is one document; reopening a sibling would make a second PDF."""
+    keep = _page(env, "duplex-20260905-101500-01.png", 200,
+                 "duplex-20260905-101500", 1)
+    blank = _page(env, "duplex-20260905-101500-02.png", 200,
+                  "duplex-20260905-101500", 2)
+    _write_state(env, keep, blank)
+    _accept(keep)
+    A.reject(blank["id"])
+    A.finalize("duplex-20260905-101500")
+    for pid in (keep["id"], blank["id"]):
+        with pytest.raises(Exception) as exc:
+            A.reopen(pid)
+        assert getattr(exc.value, "status_code", None) == 409
+

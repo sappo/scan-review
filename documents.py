@@ -15,7 +15,11 @@ from datetime import datetime
 # counts as still open on purpose: a reject has to stay reversible, and if a
 # wholly rejected document vanished then rejecting the only page of a one-page
 # document would be silently final.
-CLOSED = ("sent", "discarded")
+#
+# `closed` is what a rejected page becomes once its document HAS been sent:
+# still rejected in intent, but no longer holding the document open. Without
+# it a document that had any rejected page never left the queue.
+CLOSED = ("sent", "discarded", "closed")
 
 # What scanui.py produces: <size>-<YYYYmmdd>-<HHMMSS>.
 BATCH_NAME = re.compile(r"^(?P<size>[A-Za-z0-9]+)-(?P<d>\d{8})-(?P<t>\d{6})$")

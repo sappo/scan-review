@@ -582,8 +582,14 @@ def reopen(page_id: str):
         page = s["pages"].get(page_id)
         if not page:
             raise HTTPException(404, "unknown page")
-        if page["status"] == "sent":
-            raise HTTPException(409, "already sent")
+        # Scoped to the DOCUMENT, not the page. A rejected page whose siblings
+        # have been sent is still part of a delivered run, and reopening it
+        # would let that one ADF run produce a second PDF - the exact thing
+        # finalize() refuses to do by requiring every page to be decided.
+        batch = page.get("batch")
+        if any(p["status"] == "sent" for p in s["pages"].values()
+               if p.get("batch") == batch):
+            raise HTTPException(409, "document already sent")
         page["status"] = "pending"
         for key in ("output", "out_width", "out_height", "outside"):
             page.pop(key, None)
@@ -644,6 +650,14 @@ def finalize(batch: str):
 
         for p in staged:
             p["status"] = "sent"
+        # The rejected pages close out with the document. Leaving them
+        # `rejected` - a status outside documents.CLOSED - kept the whole
+        # document in the queue after its PDF had been delivered, where it
+        # reappeared as an empty "delete me" card. Rejecting the blank back of
+        # a duplex sheet is the common case, so this was the common path.
+        for p in members:
+            if p["status"] == "rejected":
+                p["status"] = "closed"
         save_state(s)
         return {"ok": True, "pdf": delivered.name, "batch": batch,
                 "pages": len(ids)}
