@@ -802,8 +802,18 @@ def finalize(batch: str):
         layout = img2pdf.get_fixed_dpi_layout_fun((page_dpi, page_dpi))
         pdf_path.write_bytes(img2pdf.convert(images, layout_fun=layout))
 
+        # MOVE, not copy. Two reasons, both of which bit us:
+        #
+        # out/ was a store rather than a build directory and grew without
+        # bound - 1.5GB of PDFs that had already been handed to paperless and
+        # were never read again on this side.
+        #
+        # And paperless watches the consume directory, so assembling the file
+        # there in place would let it pick up a half-written PDF. A rename
+        # within one filesystem cannot be observed partially, so the file
+        # appears complete or not at all.
         delivered = CONSUME / pdf_path.name
-        shutil.copy2(pdf_path, delivered)
+        shutil.move(str(pdf_path), str(delivered))
 
         log = json.loads(DELIVERY_LOG.read_text()) if DELIVERY_LOG.exists() else []
         log.append({"file": delivered.name, "batch": batch, "pages": len(ids),
@@ -813,6 +823,14 @@ def finalize(batch: str):
 
         for p in staged:
             p["status"] = "sent"
+            # The warped page render was an input to the PDF that now exists in
+            # paperless - a derivative of a derivative, and 25MB here. The
+            # source scan is deliberately NOT touched: it is the only original,
+            # and the delivered PDF is cropped and deskewed, so a bad crop
+            # would otherwise be unrecoverable.
+            rendered = p.pop("output", None)
+            if rendered:
+                Path(rendered).unlink(missing_ok=True)
         # The rejected pages close out with the document. Leaving them
         # `rejected` - a status outside documents.CLOSED - kept the whole
         # document in the queue after its PDF had been delivered, where it

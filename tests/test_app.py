@@ -7,6 +7,7 @@ to a suite whose fixtures are all 200 dpi and all fully accepted.
 """
 import json
 import pathlib
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -243,3 +244,63 @@ def test_a_rotated_frame_still_matches_its_own_corners(env):
 ])
 def test_batch_of(name, expected):
     assert A.batch_of(name) == expected
+
+
+# --------------------------------------------------------------------------
+# nothing accumulates once a document has been delivered
+# --------------------------------------------------------------------------
+def _deliver(env, batch="a4-20260905-101500"):
+    p = _page(env, f"{batch}-01.png", 200, batch, 1)
+    _write_state(env, p)
+    _accept(p)
+    return A.finalize(batch), p
+
+
+def test_the_delivered_pdf_does_not_stay_behind_in_out(env):
+    """out/ grew without bound - 1.5GB of PDFs already handed to paperless.
+
+    It is the BUILD directory, not a store: the PDF is assembled there and
+    moved into the consume dir, so nothing is retained on this side.
+    """
+    res, _ = _deliver(env)
+    assert (A.CONSUME / res["pdf"]).exists(), "not delivered"
+    assert list(A.OUT.glob("*.pdf")) == [], "a second copy was left in out/"
+
+
+def test_delivery_into_the_consume_dir_is_atomic(env):
+    """paperless watches that directory. Building the PDF there in place would
+    let it pick up a half-written file; a move within one filesystem cannot be
+    observed partially."""
+    res, _ = _deliver(env)
+    delivered = A.CONSUME / res["pdf"]
+    assert delivered.stat().st_size > 0
+    assert delivered.read_bytes()[:5] == b"%PDF-", "not a complete PDF"
+
+
+def test_page_renders_are_removed_once_sent(env):
+    """work/<page>.page.png is the warped page fed to img2pdf. Once the PDF is
+    delivered it is a derivative of a derivative, and it was 25MB here."""
+    res, p = _deliver(env)
+    assert list(A.WORK.glob("*.page.png")) == [], "page renders retained"
+
+
+def test_the_delivery_is_still_recorded(env):
+    """Deleting the artefact must not delete the evidence it was delivered."""
+    res, _ = _deliver(env)
+    log = json.loads(A.DELIVERY_LOG.read_text())
+    assert log[-1]["file"] == res["pdf"]
+    assert log[-1]["pages"] == 1
+
+
+def test_the_source_scan_is_kept(env):
+    """Deliberately NOT deleted. The scan is the only original; the PDF in
+    paperless is a cropped, deskewed derivative. If the crop was wrong there is
+    no way back from it."""
+    res, p = _deliver(env)
+    assert Path(p["source"]).exists(), "the original scan was destroyed"
+
+
+def test_ground_truth_survives_delivery(env):
+    """The record is what evaluate.py reads, and it is tiny."""
+    res, p = _deliver(env)
+    assert (A.TRUTH / f"{p['id']}.json").exists()
