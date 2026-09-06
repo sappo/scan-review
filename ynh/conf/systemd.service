@@ -1,0 +1,26 @@
+[Unit]
+Description=Scanpipe scan review pipeline
+After=network.target
+
+[Service]
+Type=simple
+User=__APP__
+Group=__APP__
+WorkingDirectory=__INSTALL_DIR__
+Environment="SCANPIPE_DATA=__DATA_DIR__"
+EnvironmentFile=__INSTALL_DIR__/.env
+# Loopback only: nginx terminates TLS and SSOwat decides who gets through.
+# Single process on purpose - state.json is read-modify-written under an
+# in-process lock, which cannot serialise across workers.
+ExecStart=__INSTALL_DIR__/venv/bin/uvicorn app:app --host 127.0.0.1 --port __PORT__
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=__DATA_DIR__
+
+[Install]
+WantedBy=multi-user.target

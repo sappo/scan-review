@@ -1,0 +1,30 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+ynh_script_progression "Stopping $app..."
+ynh_systemctl --service="$app" --action="stop" --wait_until="Stopped" --log_path="systemd"
+
+ynh_script_progression "Upgrading source files..."
+# install_dir is replaced wholesale. This is safe ONLY because every scan, the
+# queue state and the ground-truth corpus live in data_dir - see SCANPIPE_DATA
+# in app.py. If that ever regresses, this line destroys the user's documents.
+ynh_setup_source --dest_dir="$install_dir" --full_replace
+chown -R "$app:$app" "$install_dir"
+
+ynh_script_progression "Rebuilding the Python environment..."
+build_venv
+
+ynh_script_progression "Updating configuration..."
+# Reuses the existing token if one is stored, so the Pi keeps working.
+ensure_ingest_token
+write_env_file
+
+ynh_script_progression "Updating system configurations..."
+ynh_config_add_nginx
+ynh_config_add_systemd
+
+ynh_script_progression "Starting $app..."
+ynh_systemctl --service="$app" --action="start" --wait_until="Application startup complete" --log_path="systemd"
+
+ynh_script_progression "Upgrade of $app completed"

@@ -1,0 +1,24 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+ynh_script_progression "Deploying source files..."
+ynh_setup_source --dest_dir="$install_dir"
+chown -R "$app:$app" "$install_dir"
+
+ynh_script_progression "Building the Python environment..."
+build_venv
+
+ynh_script_progression "Configuring $app..."
+ensure_ingest_token
+write_env_file
+
+ynh_script_progression "Adding system configurations..."
+ynh_config_add_nginx
+ynh_config_add_systemd
+yunohost service add "$app" --description="Scan review pipeline" --log="/var/log/$app/$app.log"
+
+ynh_script_progression "Starting $app..."
+ynh_systemctl --service="$app" --action="start" --wait_until="Application startup complete" --log_path="systemd"
+
+ynh_script_progression "Installation of $app completed"

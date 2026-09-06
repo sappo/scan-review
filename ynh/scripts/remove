@@ -1,0 +1,18 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+# data_dir is NOT removed here. The core deletes it only when the admin asks to
+# purge, which is the right default for scanned documents: an accidental
+# `yunohost app remove` must not destroy the queue and the ground-truth corpus.
+
+if ynh_hide_warnings yunohost service status "$app" >/dev/null 2>&1; then
+    ynh_script_progression "Removing $app service integration..."
+    yunohost service remove "$app"
+fi
+
+ynh_script_progression "Removing system configurations..."
+ynh_config_remove_systemd
+ynh_config_remove_nginx
+
+ynh_script_progression "Removal of $app completed"

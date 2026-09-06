@@ -1,0 +1,23 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+# Declarative: this only lists what to include, it does not copy anything.
+
+ynh_print_info "Declaring files to be backed up..."
+
+ynh_backup "$install_dir"
+
+# The documents, the queue, and the ground-truth corpus.
+#
+# out/ is deliberately EXCLUDED. It is a build directory: the PDF is assembled
+# there and immediately moved into the paperless consume dir, so anything left
+# behind is transient. It used to be kept and reached 1.5GB of PDFs that had
+# already been delivered - a second copy of documents that live in paperless.
+ynh_backup "$data_dir/spool"
+ynh_backup "$data_dir/spool-archive"
+ynh_backup "$data_dir/work"
+ynh_backup "$data_dir/groundtruth"
+
+ynh_backup "/etc/systemd/system/$app.service"
+ynh_backup "/etc/nginx/conf.d/$domain.d/$app.conf"

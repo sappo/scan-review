@@ -1,0 +1,36 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+ynh_script_progression "Restoring the app main directory..."
+ynh_restore "$install_dir"
+chown -R "$app:$app" "$install_dir"
+
+ynh_script_progression "Restoring the data directory..."
+# out/ was not backed up (it is a build directory), so recreate it empty rather
+# than leaving finalize() to fail on a missing path.
+ynh_restore "$data_dir/spool"
+ynh_restore "$data_dir/spool-archive"
+ynh_restore "$data_dir/work"
+ynh_restore "$data_dir/groundtruth"
+mkdir -p "$data_dir/out" "$data_dir/mock-paperless/consume"
+chown -R "$app:$app" "$data_dir"
+
+ynh_script_progression "Rebuilding the Python environment..."
+# NOT restored from the backup: a venv contains absolute paths and compiled
+# wheels for the machine that built it, so it is rebuilt for this one.
+build_venv
+
+ynh_script_progression "Restoring system configurations..."
+ynh_restore "/etc/systemd/system/$app.service"
+systemctl enable "$app.service" --quiet
+ynh_restore "/etc/nginx/conf.d/$domain.d/$app.conf"
+
+yunohost service add "$app" --description="Scan review pipeline" --log="/var/log/$app/$app.log"
+
+ynh_script_progression "Reloading system configurations..."
+systemctl daemon-reload
+ynh_systemctl --service="$app" --action="start" --wait_until="Application startup complete" --log_path="systemd"
+ynh_systemctl --service=nginx --action=reload
+
+ynh_script_progression "Restoration of $app completed"

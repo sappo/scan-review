@@ -1,0 +1,72 @@
+#:schema https://raw.githubusercontent.com/YunoHost/apps/main/schemas/manifest.v2.schema.json
+packaging_format = 2
+
+id = "scanpipe"
+name = "Scanpipe"
+description.en = "Review, deskew and crop ADF scans, then deliver them as PDFs"
+description.de = "ADF-Scans pruefen, entzerren und zuschneiden, dann als PDF liefern"
+
+version = "1.0~ynh1"
+maintainers = ["kevinsapper88"]
+
+[upstream]
+license = "AGPL-3.0-or-later"
+code = "https://github.com/kevinsapper88/scanpipe"
+
+[integration]
+yunohost = ">= 12.1.17"
+helpers_version = "2.1"
+architectures = "all"
+# One scanner, one queue, one state.json guarded by an in-process lock.
+multi_instance = false
+ldap = "not_relevant"
+sso = true
+disk = "2G"
+ram.build = "512M"
+ram.runtime = "256M"
+
+[install]
+    [install.domain]
+    type = "domain"
+
+    [install.path]
+    type = "path"
+    default = "/scanpipe"
+
+    [install.init_main_permission]
+    type = "group"
+    # NOT visitors. These are scanned bank and medical documents.
+    default = "all_users"
+
+[resources]
+    [resources.system_user]
+
+    [resources.install_dir]
+
+    [resources.data_dir]
+    # Everything the operator would grieve for. Separate from install_dir
+    # because install_dir is replaced wholesale on upgrade and only data_dir
+    # is backed up.
+    subdirs = ["spool", "spool-archive", "work", "out", "groundtruth"]
+
+    [resources.permissions]
+    main.url = "/"
+    # SSOwat injects Ynh-User for the logged-in operator and blocks clients
+    # from spoofing it, which is what lets the app trust that header.
+    main.auth_header = true
+
+    # The scanner is not a YunoHost user and cannot complete an SSO login, so
+    # this one path is exempt and the app authenticates it itself with a
+    # bearer token. `protected` stops the exemption being widened or removed
+    # by a stray click in the admin UI.
+    ingest.url = "/api/ingest"
+    ingest.allowed = "visitors"
+    ingest.protected = true
+    ingest.show_tile = false
+    ingest.auth_header = false
+
+    [resources.ports]
+    main.default = 8766
+
+    [resources.apt]
+    packages = "python3, python3-venv, python3-dev, libgl1, libglib2.0-0"
