@@ -1087,7 +1087,7 @@ async function togglePeekImpl() {
   const want = Math.max(560, Math.min(2400, cv.width));
   let r;
   try {
-    r = await fetch('/api/preview/' + encodeURIComponent(state.page.id), {
+    r = await fetch('api/preview/' + encodeURIComponent(state.page.id), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ corners: cornersOf(state.frame),
                              rotation: state.rotation, target: state.format,
@@ -1151,7 +1151,7 @@ window.showFlags = showFlags;
 async function acceptImpl() {
   if (!state.page) return;
   say('accepting…');
-  const r = await request('/api/accept/' + encodeURIComponent(state.page.id), {
+  const r = await request('api/accept/' + encodeURIComponent(state.page.id), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       corners: cornersOf(state.frame),
@@ -1169,7 +1169,7 @@ async function acceptImpl() {
 
 async function rejectImpl() {
   if (!state.page) return;
-  await request('/api/reject/' + encodeURIComponent(state.page.id),
+  await request('api/reject/' + encodeURIComponent(state.page.id),
                 { method: 'POST' });
   say('rejected');
   delete state.edits[state.page.id];
@@ -1226,7 +1226,7 @@ function updateStaged() {
   const n = d ? d.counts.accepted : 0;
   const del = !!(d && d.deletable);
   btn.classList.toggle('danger', del);
-  use.setAttribute('href', del ? '/icons.svg#trash' : '/icons.svg#send');
+  use.setAttribute('href', del ? 'icons.svg#trash' : 'icons.svg#send');
   btn.dataset.action = del ? 'delete' : 'send';
   // The count belongs on the page strip, where it says how many pages this
   // document HAS. On Send it said how many were accepted, which is a different
@@ -1296,7 +1296,7 @@ async function selectPageImpl(i) {
   if (p.status === 'accepted' || p.status === 'rejected') {
     let r;
     try {
-      r = await fetch('/api/reopen/' + encodeURIComponent(p.id),
+      r = await fetch('api/reopen/' + encodeURIComponent(p.id),
                       { method: 'POST' });
     } catch {
       throw new Error('network unreachable');
@@ -1339,7 +1339,7 @@ function renderFilmstrip() {
     b.setAttribute('aria-label', `Page ${p.page_no}, ${p.status}`);
     b.onclick = () => selectPage(i);
     const im = document.createElement('img');
-    im.src = '/api/thumb/' + encodeURIComponent(p.id);
+    im.src = 'api/thumb/' + encodeURIComponent(p.id);
     im.alt = '';
     b.appendChild(im);
     if (p.status === 'accepted' || p.status === 'rejected') {
@@ -1395,7 +1395,7 @@ async function showPage() {
     // No cache-bust: a spool file is immutable once ingested - ingest() gives a
     // same-named scan with different content a distinct name - so the only
     // thing `?t=` bought was re-downloading tens of megabytes on every revisit.
-    img.src = '/api/image/' + encodeURIComponent(p.id);
+    img.src = 'api/image/' + encodeURIComponent(p.id);
   });
   if (gen !== state.gen) return;      // a newer page won while this one loaded
   state.img = im;
@@ -1414,7 +1414,7 @@ window.showPage = showPage;
  * threw it away when advanceAfterDecision() moved on - a visible flash of the
  * decided page, and tens of megabytes over the phone's Wi-Fi. */
 async function load(show = true) {
-  const r = await request('/api/queue');
+  const r = await request('api/queue');
   const data = await r.json();
   state.documents = data.documents || [];
   state.docIndex = Math.max(0, Math.min(state.docIndex,

@@ -438,7 +438,13 @@ test('every icon reference resolves to a symbol in the sprite', async ({ page, r
   expect(used.length).toBeGreaterThan(8);
   for (const href of used) {
     expect(href, 'icons must come from the vendored sprite, not a CDN')
-      .toMatch(/^\/icons\.svg#/);
+      .not.toMatch(/^(https?:)?\/\//);
+    // Relative, not /icons.svg: a packaged install serves the app under a
+    // sub-path that nginx strips, so a leading slash escapes the mount point
+    // and 404s against the domain root. This used to assert the leading slash,
+    // which was incidental to the anti-CDN property it says it is testing.
+    expect(href, 'icons must resolve under the app, not the domain root')
+      .toMatch(/^icons\.svg#/);
     // A typo'd id renders an empty button with no error, so assert resolution.
     expect(defined, `unresolved icon ${href}`).toContain(href.split('#')[1]);
   }

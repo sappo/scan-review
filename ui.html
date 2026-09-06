@@ -168,24 +168,24 @@
 <div class="bar" id="top">
   <div class="pill">
     <button data-testid="btn-reset" onclick="resetFrame()" title="Reset to detected"
-            aria-label="Reset to detected"><svg><use href="/icons.svg#reset"/></svg></button>
+            aria-label="Reset to detected"><svg><use href="icons.svg#reset"/></svg></button>
   </div>
   <div class="pill" id="nav">
     <button data-testid="btn-prev" onclick="step(-1)" title="Previous page"
-            aria-label="Previous page"><svg><use href="/icons.svg#prev"/></svg></button>
+            aria-label="Previous page"><svg><use href="icons.svg#prev"/></svg></button>
     <button class="grow" data-testid="title-toggle" onclick="toggleTitle()"
             aria-expanded="false" title="Show page name">
       <span class="fname" data-testid="page-title">…</span>
       <span class="count" data-testid="queue-count"></span>
     </button>
     <button data-testid="btn-next" onclick="step(1)" title="Next page"
-            aria-label="Next page"><svg><use href="/icons.svg#next"/></svg></button>
+            aria-label="Next page"><svg><use href="icons.svg#next"/></svg></button>
   </div>
   <div class="pill">
     <button class="danger" data-testid="btn-reject" onclick="reject()" title="Reject" aria-label="Reject">
-      <svg><use href="/icons.svg#reject"/></svg></button>
+      <svg><use href="icons.svg#reject"/></svg></button>
     <button class="primary" data-testid="btn-accept" onclick="accept()" title="Accept" aria-label="Accept">
-      <svg><use href="/icons.svg#accept"/></svg></button>
+      <svg><use href="icons.svg#accept"/></svg></button>
   </div>
 </div>
 
@@ -202,19 +202,19 @@
     <button class="text" data-testid="fmt-A5" onclick="setFormat('A5')">A5</button>
     <button class="text" data-testid="fmt-A6" onclick="setFormat('A6')">A6</button>
     <button data-testid="btn-swap" onclick="swapOrientation()" title="Swap orientation" aria-label="Swap orientation">
-      <svg><use href="/icons.svg#swap"/></svg></button>
+      <svg><use href="icons.svg#swap"/></svg></button>
     <button data-testid="btn-rotate" onclick="rotate90()" title="Rotate output 90°" aria-label="Rotate 90 degrees">
-      <svg><use href="/icons.svg#rotate"/></svg></button>
+      <svg><use href="icons.svg#rotate"/></svg></button>
   </div>
 
   <div id="panel-straighten" hidden>
     <div id="dialwrap">
       <div class="dialrow">
         <button data-testid="skew-minus-01" onclick="nudge(-0.1)" title="−0.1°" aria-label="Minus a tenth of a degree">
-          <svg><use href="/icons.svg#minus"/></svg></button>
+          <svg><use href="icons.svg#minus"/></svg></button>
         <canvas id="dial" data-testid="dial"></canvas>
         <button data-testid="skew-plus-01" onclick="nudge(0.1)" title="+0.1°" aria-label="Plus a tenth of a degree">
-          <svg><use href="/icons.svg#plus"/></svg></button>
+          <svg><use href="icons.svg#plus"/></svg></button>
       </div>
       <div class="readout"><span data-testid="angle-readout">+0.00°</span></div>
     </div>
@@ -222,36 +222,36 @@
 
   <div class="pill" id="toolbar">
     <button data-testid="mode-crop" aria-pressed="true" onclick="setMode('crop')"
-            title="Crop" aria-label="Crop"><svg><use href="/icons.svg#crop"/></svg></button>
+            title="Crop" aria-label="Crop"><svg><use href="icons.svg#crop"/></svg></button>
     <button data-testid="mode-straighten" aria-pressed="false" onclick="setMode('straighten')"
-            title="Straighten" aria-label="Straighten"><svg><use href="/icons.svg#straighten"/></svg></button>
+            title="Straighten" aria-label="Straighten"><svg><use href="icons.svg#straighten"/></svg></button>
     <span class="sep" data-testid="toolbar-sep" role="separator" aria-orientation="vertical"></span>
     <button data-testid="btn-pagesetup" aria-pressed="false" onclick="togglePageSetup()"
-            title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="/icons.svg#pagesetup"/></svg></button>
+            title="Page size &amp; rotation" aria-label="Page size and rotation"><svg><use href="icons.svg#pagesetup"/></svg></button>
     <button data-testid="grid-toggle" aria-pressed="true" onclick="toggleGrid()"
-            title="Gridlines" aria-label="Toggle gridlines"><svg><use href="/icons.svg#grid"/></svg></button>
+            title="Gridlines" aria-label="Toggle gridlines"><svg><use href="icons.svg#grid"/></svg></button>
     <button class="counted" data-testid="film-toggle" aria-pressed="true"
             onclick="toggleFilmstrip()" title="Page strip"
-            aria-label="Toggle page strip"><svg><use href="/icons.svg#film"/></svg><span
+            aria-label="Toggle page strip"><svg><use href="icons.svg#film"/></svg><span
             class="badge" data-testid="page-count"></span></button>
     <button data-testid="btn-peek" onclick="togglePeek()"
-            title="Preview result" aria-label="Preview result"><svg><use href="/icons.svg#peek"/></svg></button>
+            title="Preview result" aria-label="Preview result"><svg><use href="icons.svg#peek"/></svg></button>
     <!-- Zoom by hand, for a mouse. A phone pinches instead and has no room for
          these, so the group is hidden below the desktop breakpoint. -->
     <span class="zoomgrp" data-testid="zoom-group">
       <span class="sep" role="separator" aria-orientation="vertical"></span>
       <button data-testid="zoom-out" onclick="zoomStep(-1)"
-              title="Zoom out" aria-label="Zoom out"><svg><use href="/icons.svg#minus"/></svg></button>
+              title="Zoom out" aria-label="Zoom out"><svg><use href="icons.svg#minus"/></svg></button>
       <span class="zoomval" data-testid="zoom-readout"
             role="status" aria-label="Zoom level">100%</span>
       <button data-testid="zoom-in" onclick="zoomStep(1)"
-              title="Zoom in" aria-label="Zoom in"><svg><use href="/icons.svg#plus"/></svg></button>
+              title="Zoom in" aria-label="Zoom in"><svg><use href="icons.svg#plus"/></svg></button>
     </span>
     <button data-testid="btn-undo" onclick="undo()"
-            title="Undo" aria-label="Undo"><svg><use href="/icons.svg#undo"/></svg></button>
+            title="Undo" aria-label="Undo"><svg><use href="icons.svg#undo"/></svg></button>
     <button data-testid="btn-finalize" onclick="finalize()"
-            title="Send to paperless" aria-label="Send to paperless"><svg><use href="/icons.svg#send"/></svg></button>
+            title="Send to paperless" aria-label="Send to paperless"><svg><use href="icons.svg#send"/></svg></button>
   </div>
 </div>
 
-<script src="/ui.js"></script>
+<script src="ui.js"></script>
