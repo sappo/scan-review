@@ -243,6 +243,31 @@ Superseded: an earlier version of this file said the UI has no auth and binds
 127.0.0.1 only. It binds 0.0.0.0 behind HTTP basic auth, LAN-scoped by an
 nftables rule - see "Network access".
 
+## Installing as a YunoHost app
+
+    git clone https://github.com/sappo/scan-review.git
+    sudo yunohost app install ./scan-review/ynh --debug
+
+Install from the PACKAGE DIRECTORY on `main`, not from the release tarball.
+The manifest declares the v1.0 tarball as its *source*, and a tag cannot contain
+the checksum of its own archive - so the manifest that names the digest is
+necessarily a commit after the tag it names. `ynh/` on `main` is the package;
+the tag is the source it pulls.
+
+At install you are asked for a domain, a path, and who may access it. The
+default access group is `all_users`, not `visitors` - these are scanned
+documents. `/api/ingest` is deliberately exempt from SSO so the scanner can
+reach it, and is guarded by a bearer token the install generates.
+
+Afterwards, in the app's config panel:
+
+- **Restrict to the local network** - on by default. Set the range to match
+  your LAN, or the allowlist will not include you and the UI becomes
+  unreachable. The committed default is a placeholder.
+- Read the generated scanner token with
+  `sudo yunohost app setting scanpipe ingest_token`, and put it in the Pi's
+  `~/scanpipe.env` along with the new URL.
+
 ## Network access
 
 uvicorn binds **127.0.0.1:8766**; nginx terminates TLS on 8765 and proxies to
