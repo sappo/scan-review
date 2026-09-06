@@ -35,10 +35,10 @@ def _noise(shape, level):
     return np.zeros(shape)
 
 
-def sheet(mm, lines, text_angle=0.0, margin=0.12):
+def sheet(mm, lines, text_angle=0.0, margin=0.12, dpi=DPI):
     """An upright sheet of paper with dark bars standing in for lines of text."""
-    w = int(round(mm[0] / 25.4 * DPI))
-    h = int(round(mm[1] / 25.4 * DPI))
+    w = int(round(mm[0] / 25.4 * dpi))
+    h = int(round(mm[1] / 25.4 * dpi))
     page = np.clip(PAPER + _noise((h, w), 3.0), 0, 255).astype(np.uint8)
     if lines:
         bars = np.zeros((h, w), np.uint8)
@@ -54,54 +54,74 @@ def sheet(mm, lines, text_angle=0.0, margin=0.12):
     return page
 
 
-def scan(page, angle=0.0, centre=None, feed_gap=140):
+def scan(page, angle=0.0, centre=None, feed_gap=140, dpi=DPI):
     """Place a sheet on the ADF backing at an angle, and pad past the page end."""
-    canvas = np.full((SCAN_H, SCAN_W), 255, np.uint8)     # synthesised padding
+    # The scanner's bed is a fixed physical size, so the raster grows with
+    # resolution. A fixture that ignored this would be an A4 sheet on an A6
+    # bed and classify() would not recognise it.
+    k = dpi / DPI
+    scan_w, scan_h = int(round(SCAN_W * k)), int(round(SCAN_H * k))
+    feed_gap = int(round(feed_gap * k))
+    canvas = np.full((scan_h, scan_w), 255, np.uint8)     # synthesised padding
     ph, pw = page.shape
-    cx, cy = centre or (SCAN_W / 2, feed_gap + ph / 2)
+    cx, cy = centre or (scan_w / 2, feed_gap + ph / 2)
     # Backing covers everything the sensor actually saw: down to the page end.
-    seen = int(min(SCAN_H, cy + ph / 2 + feed_gap))
-    canvas[:seen] = np.clip(BACKING + _noise((seen, SCAN_W), 1.0), 0, 255)
+    seen = int(min(scan_h, cy + ph / 2 + feed_gap))
+    canvas[:seen] = np.clip(BACKING + _noise((seen, scan_w), 1.0), 0, 255)
 
     m = cv2.getRotationMatrix2D((pw / 2, ph / 2), -angle, 1.0)
     m[0, 2] += cx - pw / 2
     m[1, 2] += cy - ph / 2
-    placed = cv2.warpAffine(page, m, (SCAN_W, SCAN_H), flags=cv2.INTER_CUBIC,
+    placed = cv2.warpAffine(page, m, (scan_w, scan_h), flags=cv2.INTER_CUBIC,
                             borderValue=0)
-    mask = cv2.warpAffine(np.full_like(page, 255), m, (SCAN_W, SCAN_H),
+    mask = cv2.warpAffine(np.full_like(page, 255), m, (scan_w, scan_h),
                           flags=cv2.INTER_NEAREST, borderValue=0)
     canvas[mask > 127] = placed[mask > 127]
     return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
 
 
-# Two batches, because one ADF run is one document. adf-scan names a run's
+# Three batches, because one ADF run is one document. adf-scan names a run's
 # pages BASE-01, BASE-02, ... and that basename is the batch id.
+#
+# Three and not two: the document navigation tests need somewhere to step to in
+# both directions. They used to pass on two fixtures only because the operator's
+# own scans were sitting in the same queue - the exact dependency on real data
+# this generator exists to remove, and it went unnoticed until the queue was
+# emptied.
 LETTER = "fx-letter-20260830-120000"
 NOTE = "fx-note-20260830-121500"
+RECEIPT = "fx-receipt-20260830-130000"
 
 FIXTURES = {
     # A three-page letter: the ordinary case, one printed 1.2 degrees off its
     # sheet (which is what text-primary deskew exists for), one fed at an angle.
-    f"{LETTER}-01.png": (lambda: scan(sheet((210, 297), 30)), None),
-    f"{LETTER}-02.png": (lambda: scan(sheet((210, 297), 30, text_angle=1.2)), None),
-    f"{LETTER}-03.png": (lambda: scan(sheet((210, 297), 30), angle=-2.6), "A4"),
+    f"{LETTER}-01.png": (lambda: scan(sheet((210, 297), 30)), None, 200),
+    f"{LETTER}-02.png": (lambda: scan(sheet((210, 297), 30, text_angle=1.2)), None, 200),
+    f"{LETTER}-03.png": (lambda: scan(sheet((210, 297), 30), angle=-2.6), "A4", 200),
     # A separate one-page note. Blank, so the content angle is not measurable
     # and the sheet angle has to stand; the panel hint disagrees with detection.
     f"{NOTE}-01.png": (lambda: scan(sheet((148, 105), 0), angle=-7.7,
-                                    centre=(SCAN_W / 2, 700)), "A4"),
+                                    centre=(SCAN_W / 2, 700)), "A4", 200),
+    # A one-page A5 at 300 dpi. Every other fixture is 200, which is the
+    # scanner's usual setting AND the value warp() used to assume - so the test
+    # that checks a page reaches the PDF at its true physical size passed
+    # against code that ignored dpi entirely. This is the case that catches it.
+    f"{RECEIPT}-01.png": (lambda: scan(sheet((148, 210), 18, dpi=300), dpi=300),
+                          None, 300),
 }
 
 
 def main(outdir="spool"):
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
-    for name, (build, hint) in FIXTURES.items():
+    for name, (build, hint, dpi) in FIXTURES.items():
         cv2.imwrite(str(out / name), build())
         sidecar = out / (name + ".json")
+        # dpi always travels, because it is what turns pixels into millimetres.
+        meta = {"dpi": str(dpi)}
         if hint:
-            sidecar.write_text(json.dumps({"hint": hint}))
-        elif sidecar.exists():
-            sidecar.unlink()
+            meta["hint"] = hint
+        sidecar.write_text(json.dumps(meta))
         print(f"  {name}")
     print(f"{len(FIXTURES)} fixtures in {out}/")
     return 0

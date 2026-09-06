@@ -57,11 +57,27 @@ const fs = require('fs');
 const path = require('path');
 const TRUTH = path.join(__dirname, '..', 'groundtruth');
 
+/** The four corners a ratio-locked frame implies - the same derivation the UI
+ *  does before every accept. Mirrors frame.corners_of(). */
+function cornersOfFrame(f) {
+  const hw = f.w / 2, hh = f.h / 2, a = f.angle * Math.PI / 180;
+  const ca = Math.cos(a), sa = Math.sin(a);
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+    .map(([x, y]) => [f.cx + x * ca - y * sa, f.cy + x * sa + y * ca]);
+}
+
 test('accepting an untouched frame records schema 2 with unchanged=true',
   async ({ request }) => {
     const p = (await allPages(request)).find(x => x.seeded);
+    // Corners derived from the SEEDED frame, not p.corners. p.corners is the
+    // detector's raw quad; seeded is the ratio-locked frame fitted to it, and
+    // the two are different geometries by design. Sending one with the other
+    // asked the server to warp one region while recording a different one -
+    // which is precisely what this test's own unchanged=true assertion says
+    // did not happen. The server now rejects the mismatch instead of
+    // believing it.
     const r = await request.post(`/api/accept/${encodeURIComponent(p.id)}`, {
-      data: { corners: p.corners, frame: p.seeded, rotation: 0,
+      data: { corners: cornersOfFrame(p.seeded), frame: p.seeded, rotation: 0,
               target: p.seeded.format } });
     expect(r.ok()).toBeTruthy();
 
