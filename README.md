@@ -34,8 +34,12 @@ Scan with `SIZE=FULL`, not `SIZE=A4`. Cropping to exactly A4 leaves no margin, s
 there is nothing to detect and any feed skew clips real content. FULL gives the
 detector the surrounding backing to find the sheet against.
 
-    ssh rpi@192.168.1.20 'SIZE=FULL RES=200 adf-scan batch'
+    ssh "$SCANPIPE_SCANNER_HOST" 'SIZE=FULL RES=200 adf-scan batch'
     ./.venv/bin/python fetch_scans.py
+
+`SCANPIPE_SCANNER_HOST` and the rest of this machine's deployment values live
+in `deploy.env`, which is gitignored - see `deploy.env.example`. Addresses in
+this README are placeholders.
 
 ## How the sheet is found
 

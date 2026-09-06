@@ -8,6 +8,7 @@ against the source before being recorded.
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,11 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 SPOOL = ROOT / "spool"
 MANIFEST = ROOT / "work" / "fetched.json"
-DEFAULT_HOST = "rpi@192.168.1.20"
+# Deployment-specific, so it comes from the environment rather than the source.
+# deploy.env is gitignored and holds the real values for this machine; the
+# default here is a placeholder so nothing about a particular network lives in
+# a public repository.
+DEFAULT_HOST = os.environ.get("SCANPIPE_SCANNER_HOST", "rpi@192.168.1.20")
 REMOTE_DIR = "/home/rpi/scans"
 
 
