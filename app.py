@@ -31,14 +31,26 @@ from deskew import text_skew
 from warp import PAPER_MM, classify, rotate_quad, target_size_px, warp
 
 ROOT = Path(__file__).parent
-SPOOL = ROOT / "spool"
-WORK = ROOT / "work"
-ARCHIVE = ROOT / "spool-archive"
+# Code and data are separate roots, and only the data root moves.
+#
+# Everything below used to hang off the source directory. A packaged install
+# replaces the code directory wholesale on upgrade and backs up only the data
+# directory, so that arrangement would have destroyed the queue, the
+# ground-truth corpus and every delivered PDF the first time the app was
+# upgraded. ui.html, ui.js and icons.svg stay with ROOT because they ARE code
+# and must be replaced on upgrade.
+#
+# Unset, DATA is the source tree, so a checkout, the test suite and the
+# systemd unit as it stands all behave exactly as before.
+DATA = Path(os.environ.get("SCANPIPE_DATA") or ROOT)
+SPOOL = DATA / "spool"
+WORK = DATA / "work"
+ARCHIVE = DATA / "spool-archive"
 THUMB_LONG_SIDE = 160     # shown at 52px; 160 stays sharp on a dense screen
-OUT = ROOT / "out"
-CONSUME = ROOT / "mock-paperless" / "consume"
-TRUTH = ROOT / "groundtruth"
-DELIVERY_LOG = ROOT / "mock-paperless" / "deliveries.json"
+OUT = DATA / "out"
+CONSUME = DATA / "mock-paperless" / "consume"
+TRUTH = DATA / "groundtruth"
+DELIVERY_LOG = DATA / "mock-paperless" / "deliveries.json"
 STATE = WORK / "state.json"
 THUMBS = WORK / "thumbs"
 # Fallback only. The scan dpi travels per page from the Pi, because the
@@ -48,7 +60,7 @@ THUMBS = WORK / "thumbs"
 DPI = 200
 MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 
-for d in (SPOOL, WORK, OUT, CONSUME, TRUTH):
+for d in (SPOOL, WORK, ARCHIVE, OUT, CONSUME, TRUTH, THUMBS):
     d.mkdir(parents=True, exist_ok=True)
 
 # No /docs, /redoc or /openapi.json. They are behind auth, but they exist
