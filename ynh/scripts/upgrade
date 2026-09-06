@@ -21,6 +21,7 @@ ensure_ingest_token
 write_env_file
 
 ynh_script_progression "Updating system configurations..."
+set_lan_access
 ynh_config_add_nginx
 ynh_config_add_systemd
 

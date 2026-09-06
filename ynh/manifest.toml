@@ -11,7 +11,7 @@ maintainers = ["kevinsapper88"]
 
 [upstream]
 license = "AGPL-3.0-or-later"
-code = "https://github.com/kevinsapper88/scanpipe"
+code = "https://github.com/sappo/scan-review"
 
 [integration]
 yunohost = ">= 12.1.17"
@@ -39,6 +39,18 @@ ram.runtime = "256M"
     default = "all_users"
 
 [resources]
+    # Filled in per release: ynh_setup_source only fetches a declared URL and
+    # verifies it, so a tag has to exist and the digest has to match it. There
+    # is no local-directory mode.
+    #
+    # The repository is PRIVATE, so an install needs a token in the URL or the
+    # source vendored into the package instead. Left unset rather than pointing
+    # at a tag that does not exist yet, because a wrong sha256 fails the install
+    # at the download step with a confusing checksum error.
+    #[resources.sources.main]
+    #url = "https://github.com/sappo/scan-review/archive/refs/tags/v1.0.tar.gz"
+    #sha256 = "..."
+
     [resources.system_user]
 
     [resources.install_dir]

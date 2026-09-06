@@ -1,0 +1,17 @@
+#!/bin/bash
+source _common.sh
+source /usr/share/yunohost/helpers
+
+ynh_app_config_apply() {
+    # Persist the answers first, then rebuild what depends on them. Without
+    # this override the core would store the setting and change nothing, so the
+    # toggle would appear to work and have no effect.
+    _ynh_app_config_apply
+
+    # Re-render nginx from the new answers. ynh_config_add_nginx reloads nginx
+    # itself, so there is no separate reload here.
+    set_lan_access
+    ynh_config_add_nginx
+}
+
+ynh_app_config_run "$1"
