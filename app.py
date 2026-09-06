@@ -71,23 +71,28 @@ app = FastAPI(title="scanpipe", docs_url=None, redoc_url=None,
 # --------------------------------------------------------------------------
 # access control
 # --------------------------------------------------------------------------
-# The service is reachable from the LAN, and this host also answers on 0.0.0.0
-# for mail/web with a dynamic-DNS name, so an unauthenticated UI serving scanned
-# bank and medical documents would be a poor idea. Basic auth is enough here and
-# browsers handle it natively; nginx puts TLS in front of it, because basic auth
-# replays the password on every request including each thumbnail fetch.
-AUTH_USER = os.environ.get("SCANPIPE_USER", "")
-AUTH_PASS = os.environ.get("SCANPIPE_PASS", "")
-# Fail CLOSED. A missing EnvironmentFile already stops the unit, but a file that
-# merely went blank - an edit leaving SCANPIPE_PASS= empty, a typo'd key - used
-# to start cleanly and serve every scanned bank and medical document to anyone
-# who could reach the port, logging nothing to say so. Refusing to start is loud;
-# serving unauthenticated is silent, and silence is the wrong failure here.
+# Two clients with nothing in common, so two mechanisms.
+#
+# The OPERATOR is a real user, authenticated by SSOwat before the request ever
+# reaches this process. SSOwat injects Ynh-User and blocks clients from
+# spoofing it, so its presence is what the app trusts. Basic auth is gone: it
+# replayed the password on every request including each thumbnail fetch, and
+# SSO does the job properly.
+#
+# The SCANNER is a Raspberry Pi. It is not a YunoHost user and cannot complete
+# an SSO login, so its one path is exempt from SSO in the manifest - which
+# means the app itself is the only thing guarding an upload endpoint that
+# `visitors` can reach. It authenticates with a bearer token.
+INGEST_PATH = "/api/ingest"
+INGEST_TOKEN = os.environ.get("SCANPIPE_INGEST_TOKEN", "")
+# Dev/local escape hatch: no SSO in front, no token, no checks. Explicit
+# because the failure it prevents is silent - serving scanned bank and medical
+# documents to anyone who can reach the port, logging nothing to say so.
 ALLOW_ANONYMOUS = os.environ.get("SCANPIPE_ALLOW_ANONYMOUS") == "1"
-if not (AUTH_USER and AUTH_PASS) and not ALLOW_ANONYMOUS:
+if not INGEST_TOKEN and not ALLOW_ANONYMOUS:
     raise RuntimeError(
-        "SCANPIPE_USER and SCANPIPE_PASS must both be set; refusing to start. "
-        "Set SCANPIPE_ALLOW_ANONYMOUS=1 for a deliberately open local instance.")
+        "SCANPIPE_INGEST_TOKEN must be set; refusing to start. Set "
+        "SCANPIPE_ALLOW_ANONYMOUS=1 for a deliberately open local instance.")
 
 
 @app.middleware("http")
@@ -152,22 +157,28 @@ async def deny_cross_site(request: Request, call_next):
 
 @app.middleware("http")
 async def require_auth(request: Request, call_next):
-    if not (AUTH_USER and AUTH_PASS):
+    if ALLOW_ANONYMOUS:
         return await call_next(request)
-    header = request.headers.get("authorization", "")
-    ok = False
-    if header.startswith("Basic "):
-        import base64
-        try:
-            user, _, password = base64.b64decode(header[6:]).decode().partition(":")
-            # compare_digest on both fields to avoid leaking length/prefix by timing
-            ok = (hmac.compare_digest(user, AUTH_USER)
-                  and hmac.compare_digest(password, AUTH_PASS))
-        except Exception:
-            ok = False
-    if not ok:
-        return Response(status_code=401, content="authentication required",
-                        headers={"WWW-Authenticate": 'Basic realm="scanpipe"'})
+
+    if request.url.path == INGEST_PATH:
+        # The scanner's credential, and ONLY for this path. It sits in
+        # cleartext on a device in a cupboard, so it must not also be able to
+        # read every scanned document. A Ynh-User header buys nothing here:
+        # SSOwat is not in front of this path to validate or strip one, so a
+        # client could simply assert it.
+        header = request.headers.get("authorization", "")
+        offered = header[7:] if header.startswith("Bearer ") else ""
+        if not (offered and hmac.compare_digest(offered, INGEST_TOKEN)):
+            return Response(status_code=401, content="scanner token required",
+                            headers={"WWW-Authenticate": "Bearer"})
+        return await call_next(request)
+
+    # Everything else is the operator, and SSOwat has already decided. Requiring
+    # the header rather than assuming it is defence in depth: if this process is
+    # ever reachable without SSOwat in front of it, it must not simply hand over
+    # the documents.
+    if not request.headers.get("ynh-user"):
+        return Response(status_code=401, content="authentication required")
     return await call_next(request)
 
 # State lives in one JSON file that is read-modify-written under this lock. A

@@ -1,15 +1,14 @@
 const { devices } = require('@playwright/test');
 
-// The service requires basic auth; read it from the same file systemd uses.
-const httpCredentials = (() => {
-  const fs = require('fs');
-  const env = Object.fromEntries(
-    fs.readFileSync(__dirname + '/secrets.env', 'utf8')
-      .split('\n').filter(Boolean).map(l => l.split('=')));
-  return { username: env.SCANPIPE_USER, password: env.SCANPIPE_PASS };
-})();
-
-const base = { headless: true, baseURL: 'http://127.0.0.1:8765', httpCredentials };
+// No credentials. In a packaged install SSOwat authenticates the operator
+// before the request reaches uvicorn, so there is nothing for a browser to
+// send; the suite drives the app directly on its loopback port, which is where
+// SSOwat would have delivered the request anyway. The dev service runs with
+// SCANPIPE_ALLOW_ANONYMOUS=1 for the same reason.
+//
+// The auth model itself is covered by tests/test_auth_modes.py, which exercises
+// the middleware stack directly rather than needing a browser to hold a session.
+const base = { headless: true, baseURL: 'http://127.0.0.1:8765' };
 
 module.exports = {
   testDir: './tests',
