@@ -39,17 +39,18 @@ ram.runtime = "256M"
     default = "all_users"
 
 [resources]
-    # Filled in per release: ynh_setup_source only fetches a declared URL and
-    # verifies it, so a tag has to exist and the digest has to match it. There
-    # is no local-directory mode.
+    [resources.sources.main]
+    url = "https://github.com/sappo/scan-review/archive/refs/tags/v1.0.tar.gz"
+    sha256 = "4f7c19d4e11659a33c0a82447ba9b59478961b2c4ad850c135e8b73362e7ca99"
+    # The archive's single top-level directory (scan-review-1.0/) is stripped,
+    # which is in_subdir's default, so app.py lands at the install root where
+    # the systemd unit's `uvicorn app:app` expects it.
     #
-    # The repository is PRIVATE, so an install needs a token in the URL or the
-    # source vendored into the package instead. Left unset rather than pointing
-    # at a tag that does not exist yet, because a wrong sha256 fails the install
-    # at the download step with a confusing checksum error.
-    #[resources.sources.main]
-    #url = "https://github.com/sappo/scan-review/archive/refs/tags/v1.0.tar.gz"
-    #sha256 = "..."
+    # GitHub's auto-generated tag archives are not contractually byte-stable -
+    # they have been regenerated before, which changes the digest and breaks
+    # installs with a checksum error. If that happens, attach a built tarball
+    # to the release as an asset and point this at that instead.
+    autoupdate.strategy = "latest_github_tag"
 
     [resources.system_user]
 
