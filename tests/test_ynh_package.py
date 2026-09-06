@@ -129,3 +129,21 @@ def test_the_lan_range_is_asked_at_install_not_after():
     assert "lan_subnet" in m["install"], "LAN range must be an install question"
     assert "lan_only" in m["install"]
     assert m["install"]["lan_only"]["default"] == "1", "must default to restricted"
+
+
+def test_the_unit_does_not_sandbox_away_its_own_data_dir():
+    """ProtectHome=yes mounts an empty tmpfs over /home for the service, and
+    YunoHost's data_dir lives at /home/yunohost.app/<app>. The app then cannot
+    stat() its own spool directory and dies at import with EACCES - which is
+    exactly how the first real install failed. ReadWritePaths does not rescue
+    it. Cheap to reintroduce while 'hardening', and it only fails on a real
+    install, never in the test suite."""
+    unit = (YNH / "conf" / "systemd.service").read_text()
+    active = [ln.strip() for ln in unit.splitlines()
+              if ln.strip() and not ln.strip().startswith("#")]
+    offenders = [ln for ln in active if ln.startswith("ProtectHome=")
+                 and ln.split("=", 1)[1].strip() not in ("no", "false")]
+    assert not offenders, f"unit would hide its own data_dir: {offenders}"
+    # The protection that does apply, and should stay.
+    assert any(ln.startswith("ProtectSystem=") for ln in active)
+    assert any(ln.startswith("NoNewPrivileges=") for ln in active)

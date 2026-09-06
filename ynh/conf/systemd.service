@@ -19,7 +19,12 @@ RestartSec=3
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
-ProtectHome=yes
+# NOT ProtectHome=yes. YunoHost puts data_dir under /home/yunohost.app/, and
+# ProtectHome mounts an empty tmpfs over /home for the service - so the app
+# could not even stat() its own spool directory and died at import with
+# EACCES. ReadWritePaths did not save it. ProtectSystem=full leaves /home
+# alone, so the data directory stays writable while /usr, /boot and /etc are
+# read-only, which is the protection that actually matters here.
 ReadWritePaths=__DATA_DIR__
 
 [Install]
