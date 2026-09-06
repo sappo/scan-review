@@ -26,7 +26,10 @@ const CONSUME = path.join(ROOT, 'mock-paperless', 'consume');
 /** The suite supplies its own scans. It used to run against real documents in
  *  spool/, which are not in the repository and were consumed as the tests ran,
  *  so it only worked on one machine and only until the queue emptied. */
-const FIXTURE_COUNT = 4;
+const FIXTURE_COUNT = 5;
+/** Same prefix teardown-queue.js uses. Anything not matching it belongs to the
+ *  operator, not to this suite, and must survive a test run. */
+const FIXTURE = /^fx-/;
 
 function ensureFixtures() {
   const spool = path.join(ROOT, 'spool');
@@ -72,9 +75,24 @@ function reset() {
   const thumbs = path.join(ROOT, 'work', 'thumbs');
   if (fs.existsSync(thumbs))
     for (const f of fs.readdirSync(thumbs)) fs.unlinkSync(path.join(thumbs, f));
+  // ONLY this suite's own records. This used to delete every .json in
+  // groundtruth/, so a single test run destroyed the entire ground-truth
+  // corpus - the thing the accept/seed/error apparatus exists to accumulate,
+  // and which cannot be reconstructed once gone. teardown-queue.js always
+  // filtered on the fixture prefix; this did not, and it runs before EVERY
+  // test rather than once per suite.
+  //
+  // The two directories need different rules. A ground-truth record is named
+  // after its page (fx-letter-...png.json), so it starts with the prefix. A
+  // delivered PDF is document-<stamp>-<batch>.pdf, so the prefix is in the
+  // MIDDLE - matching on ^fx- there would quietly stop cleaning them and let
+  // them pile up run after run.
+  const mine = { [TRUTH]: f => FIXTURE.test(f),
+                 [CONSUME]: f => f.includes('-fx-') };
   for (const dir of [TRUTH, CONSUME]) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
+      if (!mine[dir](f)) continue;
       if (f.endsWith('.json') || f.endsWith('.pdf')) fs.unlinkSync(path.join(dir, f));
     }
   }
