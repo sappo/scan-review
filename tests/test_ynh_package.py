@@ -118,3 +118,14 @@ def test_the_config_panel_offers_the_toggle():
     assert access["lan_only"]["type"] == "boolean"
     assert access["lan_only"]["default"] == "1", "must default to LAN-only"
     assert access["lan_subnet"]["visible"] == "lan_only == '1'"
+
+
+def test_the_lan_range_is_asked_at_install_not_after():
+    """The nginx allowlist is written during install. A default that does not
+    match the operator's network makes the UI unreachable the moment it exists,
+    and the place to fix it would be the config panel of the app you can no
+    longer reach."""
+    m = tomllib.load((YNH / "manifest.toml").open("rb"))
+    assert "lan_subnet" in m["install"], "LAN range must be an install question"
+    assert "lan_only" in m["install"]
+    assert m["install"]["lan_only"]["default"] == "1", "must default to restricted"
