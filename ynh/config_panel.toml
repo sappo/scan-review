@@ -20,9 +20,13 @@ away from home - your YunoHost login then becomes the only thing in front of
 scanned bank and medical documents."""
 
         [main.access.lan_subnet]
-        ask = "Local network range"
+        ask = "Local network ranges"
         type = "string"
         default = "192.168.1.0/24"
-        pattern.regexp = '^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$'
-        pattern.error = "Expected CIDR notation, for example 192.168.1.0/24"
+        # A LIST, space or comma separated, because a home LAN is dual-stack.
+        # A client that resolves this host locally may arrive over IPv4 or over
+        # an IPv6 ULA, and an IPv4-only allowlist silently refuses the latter.
+        pattern.regexp = '^[0-9a-fA-F:.]+/[0-9]{1,3}([ ,]+[0-9a-fA-F:.]+/[0-9]{1,3})*$'
+        pattern.error = "One or more CIDR ranges, e.g. 192.168.1.0/24 fd00::/8"
+        help = "Space-separated. Include your IPv6 ULA prefix too, or IPv6-preferring clients will be refused."
         visible = "lan_only == '1'"

@@ -46,7 +46,15 @@ set_lan_access() {
     ynh_app_setting_set --app="$app" --key=lan_only --value="$lan_only"
     ynh_app_setting_set --app="$app" --key=lan_subnet --value="$lan_subnet"
     if [ "$lan_only" = "1" ]; then
-        lan_access="allow $lan_subnet; deny all;"
+        # One allow per range. A home LAN is dual-stack: the same client may
+        # arrive as 192.168.x.y or as an IPv6 ULA depending on what DNS handed
+        # it, and refusing one of those looks like the app being broken rather
+        # than a firewall decision.
+        lan_access=""
+        for range in ${lan_subnet//,/ }; do
+            lan_access="${lan_access}allow ${range}; "
+        done
+        lan_access="${lan_access}deny all;"
     else
         # SSO is the only gate. Set deliberately via the config panel.
         lan_access="allow all;"

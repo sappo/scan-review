@@ -147,3 +147,21 @@ def test_the_unit_does_not_sandbox_away_its_own_data_dir():
     # The protection that does apply, and should stay.
     assert any(ln.startswith("ProtectSystem=") for ln in active)
     assert any(ln.startswith("NoNewPrivileges=") for ln in active)
+
+
+def test_the_allowlist_accepts_several_ranges():
+    """A home LAN is dual-stack. Once the app's own DNS answer points clients at
+    this host, they may arrive over IPv4 or over an IPv6 ULA depending on what
+    the resolver handed them and which the client preferred - and an IPv4-only
+    allowlist refuses the second in a way that looks like the app being broken.
+    """
+    common = (YNH / "scripts" / "_common.sh").read_text()
+    assert "${lan_subnet//,/ }" in common, "ranges must be split, not used whole"
+    panel = tomllib.load((YNH / "config_panel.toml").open("rb"))
+    rx = panel["main"]["access"]["lan_subnet"]["pattern"]["regexp"]
+    import re
+    ok = re.compile(rx)
+    assert ok.match("192.168.1.0/24")
+    assert ok.match("192.168.1.0/24 fd00::/8")
+    assert ok.match("192.168.1.0/24, fdff:d052:40d9::/48")
+    assert not ok.match("not-a-range")
