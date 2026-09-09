@@ -1,0 +1,28 @@
+# Answer LAN clients for __DOMAIN__, so it resolves to this host's LAN address
+# instead of its public one. Written by the scanpipe app; removed when it is.
+#
+# Without this, a LAN client resolves __DOMAIN__ via public DNS, gets the WAN
+# address, leaves through the router and comes back - and a NAT that rewrites
+# the source makes the request look like it came from the internet, so the
+# LAN-only restriction refuses it.
+
+# Explicit addresses, NOT `interface=`. The LAN interface usually also carries
+# a public IPv6, and YunoHost's firewall permits udp/53 - binding the whole
+# interface would publish an open resolver to the internet.
+listen-address=127.0.0.1
+listen-address=::1
+listen-address=__LAN_IP__
+
+# bind-dynamic rather than bind-interfaces: it tolerates the address appearing
+# after dnsmasq starts, so a boot-order race cannot leave the host without DNS.
+bind-dynamic
+
+# Force A, suppress AAAA, for this name only.
+#
+# YunoHost's own record for the domain is `interface-name=__DOMAIN__,<iface>`,
+# which answers with EVERY address on that interface - including the public
+# IPv6. RFC 6724 makes clients prefer a global IPv6 over LAN IPv4, so a phone
+# would pick the public address, arrive from outside the LAN, and be refused.
+# Returning :: for AAAA makes clients use IPv4, which stays on the LAN.
+address=/__DOMAIN__/__LAN_IP__
+address=/__DOMAIN__/::

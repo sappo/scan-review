@@ -22,6 +22,7 @@ write_env_file
 
 ynh_script_progression "Updating system configurations..."
 set_lan_access
+configure_lan_dns
 ynh_config_add_nginx
 ynh_config_add_systemd
 

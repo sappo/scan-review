@@ -11,6 +11,11 @@ if ynh_hide_warnings yunohost service status "$app" >/dev/null 2>&1; then
     yunohost service remove "$app"
 fi
 
+ynh_script_progression "Restoring the host's DNS..."
+# Before nginx/systemd: this is host-wide state the app borrowed, and it
+# should be given back even if a later removal step fails.
+remove_lan_dns
+
 ynh_script_progression "Removing system configurations..."
 ynh_config_remove_systemd
 ynh_config_remove_nginx

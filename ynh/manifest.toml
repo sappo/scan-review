@@ -51,6 +51,15 @@ ram.runtime = "256M"
     default = "1"
     help.en = "SSO decides who may log in; this decides from where. Leaving it on keeps the scans unreachable from the internet even if a permission is widened by mistake."
 
+    [install.lan_dns]
+    ask.en = "Answer DNS for this domain on your local network?"
+    type = "boolean"
+    yes = "1"
+    no = "0"
+    default = "1"
+    help.en = "Writes /etc/dnsmasq.d/scanpipe so LAN clients reach this host directly instead of going out to the router and back. Removed when the app is."
+    visible = "lan_only == 1"
+
     [install.lan_subnet]
     ask.en = "Which network range should be allowed?"
     ask.de = "Welcher Netzbereich soll erlaubt sein?"
