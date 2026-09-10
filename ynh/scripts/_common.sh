@@ -60,3 +60,18 @@ set_lan_access() {
         lan_access="allow all;"
     fi
 }
+
+# Record this host's LAN address as a setting, so the post-install notes can
+# name it exactly instead of telling the operator to go and find it.
+#
+# Purely informational: nothing acts on this value. It is the source address
+# the kernel would use to reach the configured range, which is the right answer
+# whenever that range is one this host is actually on. If it is not, the value
+# falls back to the default route's source rather than failing - acceptable for
+# a documentation string, and not worth a CIDR implementation in shell.
+record_lan_ip() {
+    local first
+    first=$(echo "$lan_subnet" | tr ',' ' ' | awk '{print $1}' | cut -d/ -f1)
+    lan_ip=$(ip -4 route get "$first" 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+    ynh_app_setting_set --app="$app" --key=lan_ip --value="${lan_ip:-this server}"
+}

@@ -32,6 +32,7 @@ if [ -e "/etc/dnsmasq.d/$app" ]; then
 fi
 
 ynh_script_progression "Updating system configurations..."
+record_lan_ip
 set_lan_access
 ynh_config_add_nginx
 ynh_config_add_systemd

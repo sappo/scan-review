@@ -179,3 +179,26 @@ def test_every_setting_the_config_panel_offers_is_actually_applied():
         fn = appliers.get(setting)
         assert fn, f"{setting} is offered but this test does not know what applies it"
         assert fn in config, f"{setting} is offered but scripts/config never calls {fn}"
+
+
+def test_the_post_install_note_tells_the_operator_what_is_missing():
+    """The LAN restriction does not work on its own: a client resolves the
+    domain to the public address, leaves through the router and returns with a
+    rewritten source, and is refused. That step is not something the package can
+    do - the resolver belongs to the network - so it must at least be stated,
+    with the actual values filled in."""
+    doc = (YNH / "doc" / "POST_INSTALL.md")
+    assert doc.exists(), "no post-install note"
+    body = doc.read_text()
+    for tag in ("__DOMAIN__", "__LAN_IP__", "__APP__"):
+        assert tag in body, f"{tag} not substituted into the note"
+    assert "rebind" in body.lower(), "the rebind trap is the one that looks like success"
+    assert "ingest_token" in body, "the scanner still needs its token"
+
+
+def test_lan_ip_is_recorded_for_the_docs():
+    common = (YNH / "scripts" / "_common.sh").read_text()
+    assert "record_lan_ip" in common
+    assert "--key=lan_ip" in common
+    for script in ("install", "upgrade"):
+        assert "record_lan_ip" in (YNH / "scripts" / script).read_text(), script
