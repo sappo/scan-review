@@ -196,3 +196,19 @@ def test_lan_dns_is_only_offered_when_the_restriction_is_on():
     assert m["install"]["lan_dns"]["visible"] == "lan_only == 1"
     c = tomllib.load((YNH / "config_panel.toml").open("rb"))
     assert c["main"]["access"]["lan_dns"]["visible"] == "lan_only == '1'"
+
+
+def test_every_setting_the_config_panel_offers_is_actually_applied():
+    """A config panel that stores a setting and changes nothing is worse than
+    not having the setting: it reports success and the system is unchanged.
+    The core writes the value; only scripts/config makes it take effect."""
+    panel = tomllib.load((YNH / "config_panel.toml").open("rb"))
+    offered = {k for k in panel["main"]["access"] if k != "name"}
+    config = (YNH / "scripts" / "config").read_text()
+    # Each setting must be reachable from an apply step in scripts/config.
+    appliers = {"lan_only": "set_lan_access", "lan_subnet": "set_lan_access",
+                "lan_dns": "configure_lan_dns"}
+    for setting in offered:
+        fn = appliers.get(setting)
+        assert fn, f"{setting} is offered but this test does not know what applies it"
+        assert fn in config, f"{setting} is offered but scripts/config never calls {fn}"
