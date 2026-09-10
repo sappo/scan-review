@@ -167,65 +167,15 @@ def test_the_allowlist_accepts_several_ranges():
     assert not ok.match("not-a-range")
 
 
-def test_host_dns_changes_are_validated_before_being_applied():
-    """This app writes /etc/dnsmasq.d/ and restarts dnsmasq. A bad file there
-    does not break the app, it breaks the HOST: dnsmasq refuses to start and
-    the machine loses name resolution, mail and updates with it. So the config
-    is tested first, and removed again if it fails."""
-    common = (YNH / "scripts" / "_common.sh").read_text()
-    assert "--test --conf-file" in common, "config is applied without validation"
-    # Absolute path: /usr/sbin is not on every PATH, and a check that cannot
-    # find its binary is a check that always reports failure.
-    assert "/usr/sbin/dnsmasq --test" in common, "validation depends on PATH"
-    i = common.index("--test --conf-file")
-    assert "ynh_safe_rm" in common[i:i + 400], "invalid config is left in place"
-
-
-def test_the_host_dns_change_is_reversed_on_removal():
-    """Host-wide state the app borrowed has to be given back, and before the
-    other teardown steps in case one of them fails."""
-    remove = (YNH / "scripts" / "remove").read_text()
-    assert "remove_lan_dns" in remove
-    assert remove.index("remove_lan_dns") < remove.index("ynh_config_remove_nginx")
-
-
-def test_lan_dns_is_only_offered_when_the_restriction_is_on():
-    """It exists to make lan_only usable; on its own it would just be an app
-    quietly taking over the host's DNS."""
-    m = tomllib.load((YNH / "manifest.toml").open("rb"))
-    assert m["install"]["lan_dns"]["visible"] == "lan_only == 1"
-    c = tomllib.load((YNH / "config_panel.toml").open("rb"))
-    assert c["main"]["access"]["lan_dns"]["visible"] == "lan_only == '1'"
-
-
 def test_every_setting_the_config_panel_offers_is_actually_applied():
-    """A config panel that stores a setting and changes nothing is worse than
-    not having the setting: it reports success and the system is unchanged.
-    The core writes the value; only scripts/config makes it take effect."""
+    """A panel that stores a value and changes nothing is worse than not
+    offering it, because it reports success. The core writes the setting;
+    only scripts/config makes it take effect."""
     panel = tomllib.load((YNH / "config_panel.toml").open("rb"))
     offered = {k for k in panel["main"]["access"] if k != "name"}
     config = (YNH / "scripts" / "config").read_text()
-    # Each setting must be reachable from an apply step in scripts/config.
-    appliers = {"lan_only": "set_lan_access", "lan_subnet": "set_lan_access",
-                "lan_dns": "configure_lan_dns"}
-    for setting in offered:
+    appliers = {"lan_only": "set_lan_access", "lan_subnet": "set_lan_access"}
+    for setting in sorted(offered):
         fn = appliers.get(setting)
         assert fn, f"{setting} is offered but this test does not know what applies it"
         assert fn in config, f"{setting} is offered but scripts/config never calls {fn}"
-
-
-def test_the_dnsmasq_file_claims_only_what_it_can_do():
-    """dnsmasq gives `interface-name` absolute precedence - verified against
-    2.90 that neither address= nor host-record=, in either load order, can
-    override it. YunoHost publishes interface-name for every one of its
-    domains, so this file can only decide where dnsmasq LISTENS, never what it
-    answers. Directives that pretend otherwise are dead lines with a comment
-    asserting they work, which is worse than not having them."""
-    conf = (YNH / "conf" / "dnsmasq").read_text()
-    live = [l.strip() for l in conf.splitlines()
-            if l.strip() and not l.strip().startswith("#")]
-    for directive in ("address=", "host-record=", "cname="):
-        assert not any(l.startswith(directive) for l in live), (
-            f"{directive} cannot override interface-name; it is a no-op here")
-    assert any(l.startswith("listen-address=") for l in live)
-    assert "bind-dynamic" in live

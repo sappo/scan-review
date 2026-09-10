@@ -8,12 +8,9 @@ ynh_app_config_apply() {
     # toggle would appear to work and have no effect.
     _ynh_app_config_apply
 
-    # Re-render everything the answers feed, not just nginx. lan_dns was
-    # accepted here but never applied, so the toggle stored a setting and
-    # changed nothing - which is the exact failure this override exists to
-    # prevent, reintroduced one setting later.
+    # Re-render nginx from the new answers. ynh_config_add_nginx reloads nginx
+    # itself, so there is no separate reload here.
     set_lan_access
-    configure_lan_dns
     ynh_config_add_nginx
 }
 

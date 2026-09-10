@@ -19,19 +19,6 @@ mistake, or the router forwards the port. Turn it off to review scans while
 away from home - your YunoHost login then becomes the only thing in front of
 scanned bank and medical documents."""
 
-        [main.access.lan_dns]
-        ask = "Answer DNS for this domain on the local network"
-        type = "boolean"
-        yes = "1"
-        no = "0"
-        default = "1"
-        help = """Needed for the restriction above to be usable. A LAN client
-otherwise resolves this domain to the public address, leaves through the router
-and returns with a rewritten source address - which the restriction then
-refuses. This writes /etc/dnsmasq.d/scanpipe on the host and is removed when the
-app is. Point your router's DNS at this host for it to take effect."""
-        visible = "lan_only == '1'"
-
         [main.access.lan_subnet]
         ask = "Local network ranges"
         type = "string"
