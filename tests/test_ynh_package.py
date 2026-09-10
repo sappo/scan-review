@@ -212,3 +212,20 @@ def test_every_setting_the_config_panel_offers_is_actually_applied():
         fn = appliers.get(setting)
         assert fn, f"{setting} is offered but this test does not know what applies it"
         assert fn in config, f"{setting} is offered but scripts/config never calls {fn}"
+
+
+def test_the_dnsmasq_file_claims_only_what_it_can_do():
+    """dnsmasq gives `interface-name` absolute precedence - verified against
+    2.90 that neither address= nor host-record=, in either load order, can
+    override it. YunoHost publishes interface-name for every one of its
+    domains, so this file can only decide where dnsmasq LISTENS, never what it
+    answers. Directives that pretend otherwise are dead lines with a comment
+    asserting they work, which is worse than not having them."""
+    conf = (YNH / "conf" / "dnsmasq").read_text()
+    live = [l.strip() for l in conf.splitlines()
+            if l.strip() and not l.strip().startswith("#")]
+    for directive in ("address=", "host-record=", "cname="):
+        assert not any(l.startswith(directive) for l in live), (
+            f"{directive} cannot override interface-name; it is a no-op here")
+    assert any(l.startswith("listen-address=") for l in live)
+    assert "bind-dynamic" in live
