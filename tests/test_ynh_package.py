@@ -202,3 +202,16 @@ def test_lan_ip_is_recorded_for_the_docs():
     assert "--key=lan_ip" in common
     for script in ("install", "upgrade"):
         assert "record_lan_ip" in (YNH / "scripts" / script).read_text(), script
+
+
+def test_nginx_does_not_strip_the_header_the_app_authenticates_with():
+    """proxy_params_no_auth blanks Ynh-User. It is meant for apps doing their
+    own auth; this app trusts SSOwat's header, so including it means a
+    successful SSO login followed by the app reporting "authentication
+    required" - which reads as a broken app rather than a proxy setting."""
+    conf = (YNH / "conf" / "nginx.conf").read_text()
+    live = [l.strip() for l in conf.splitlines()
+            if l.strip() and not l.strip().startswith("#")]
+    assert not any("proxy_params_no_auth" in l for l in live), (
+        "proxy_params_no_auth blanks Ynh-User, which this app requires")
+    assert any(l == "include proxy_params;" for l in live)
