@@ -62,8 +62,8 @@ ram.runtime = "256M"
 
 [resources]
     [resources.sources.main]
-    url = "https://github.com/sappo/scan-review/archive/refs/tags/v1.0.tar.gz"
-    sha256 = "4f7c19d4e11659a33c0a82447ba9b59478961b2c4ad850c135e8b73362e7ca99"
+    url = "https://github.com/sappo/scan-review/archive/refs/tags/v1.1.tar.gz"
+    sha256 = "cfca3a12fb37bcac918ff5ca10fb2469bc79d4d7654161346424a06498a80145"
     # The archive's single top-level directory (scan-review-1.0/) is stripped,
     # which is in_subdir's default, so app.py lands at the install root where
     # the systemd unit's `uvicorn app:app` expects it.

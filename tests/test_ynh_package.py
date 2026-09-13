@@ -215,3 +215,22 @@ def test_nginx_does_not_strip_the_header_the_app_authenticates_with():
     assert not any("proxy_params_no_auth" in l for l in live), (
         "proxy_params_no_auth blanks Ynh-User, which this app requires")
     assert any(l == "include proxy_params;" for l in live)
+
+
+def test_the_pinned_source_tag_contains_the_current_app():
+    """The package installs app.py from the tagged tarball, not the working
+    tree. Every fix to app.py after a tag is therefore invisible to an upgrade
+    until the tag moves - which is exactly how a header fix was 'deployed'
+    three times without ever reaching the server."""
+    import subprocess
+    m = tomllib.load((YNH / "manifest.toml").open("rb"))
+    url = m["resources"]["sources"]["main"]["url"]
+    tag = url.rsplit("/", 1)[-1].removesuffix(".tar.gz")
+    root = YNH.parent
+    tagged = subprocess.run(["git", "show", f"{tag}:app.py"], cwd=root,
+                            capture_output=True, text=True)
+    assert tagged.returncode == 0, f"pinned tag {tag} does not exist"
+    current = (root / "app.py").read_text()
+    assert tagged.stdout == current, (
+        f"app.py has changed since {tag}; an upgrade would still install the old "
+        f"one. Cut a new tag and repoint resources.sources.main.")
