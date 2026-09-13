@@ -84,16 +84,24 @@ def test_ingest_refuses_no_token_at_all():
     assert probe("POST", "/api/ingest", {"content-length": "0"}, ENV) == 401
 
 
-def test_ingest_ignores_ynh_user_entirely():
-    """A client CAN set Ynh-User on the exempt path - SSOwat is not in the way
-    there to strip or validate it - so it must buy nothing."""
+@pytest.mark.parametrize("spelling", ["ynh_user", "ynh-user"])
+def test_ingest_ignores_the_operator_header_entirely(spelling):
+    """A client CAN set this on the exempt path - SSOwat is not in the way
+    there to strip or validate it - so it must buy nothing, either spelling."""
     assert probe("POST", "/api/ingest",
-                 {"ynh-user": "admin", "content-length": "0"}, ENV) == 401
+                 {spelling: "admin", "content-length": "0"}, ENV) == 401
 
 
 # --- the operator ---------------------------------------------------------
-def test_the_ui_accepts_a_request_sswat_has_authenticated():
-    assert probe("GET", "/api/queue", {"ynh-user": "kevin"}, ENV) == 200
+@pytest.mark.parametrize("spelling", ["ynh_user", "ynh-user"])
+def test_the_ui_accepts_a_request_ssowat_has_authenticated(spelling):
+    """SSOwat builds the table as `{ YNH_USER = ... }` in access.lua and sets
+    it verbatim - UNDERSCORES, not the hyphens the docs describe. Checking only
+    the documented spelling matched nothing, so every logged-in request was
+    refused straight after a successful login. Both are accepted, and both are
+    safe: SSOwat clears every client header starting ynh_ or ynh- before it
+    decides access."""
+    assert probe("GET", "/api/queue", {spelling: "kevin"}, ENV) == 200
 
 
 def test_the_ui_refuses_a_request_with_no_ynh_user():

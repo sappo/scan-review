@@ -177,7 +177,18 @@ async def require_auth(request: Request, call_next):
     # the header rather than assuming it is defence in depth: if this process is
     # ever reachable without SSOwat in front of it, it must not simply hand over
     # the documents.
-    if not request.headers.get("ynh-user"):
+    #
+    # UNDERSCORES. SSOwat builds the table as `{ YNH_USER = ... }` in access.lua
+    # and sets it verbatim - there is no conversion to `Ynh-User` anywhere, so
+    # checking the hyphenated spelling matched nothing and every logged-in
+    # request was refused immediately after a successful login.
+    #
+    # Both spellings are accepted because the documentation says one and the
+    # code does the other, and a future version may well settle on the
+    # documented name. Accepting both is safe: SSOwat clears EVERY client
+    # header starting `ynh_` or `ynh-` before it decides access, so neither
+    # can be forged.
+    if not (request.headers.get("ynh_user") or request.headers.get("ynh-user")):
         return Response(status_code=401, content="authentication required")
     return await call_next(request)
 
